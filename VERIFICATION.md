@@ -59,3 +59,12 @@ The seed generator now creates 50 fictional listings. Schema migration 2 unpubli
 - `npm test`: **55 tests passed**, including the new legacy-data migration regression.
 - `npm run build`: **passed**.
 - No new browser walkthrough was run for this data-only change.
+
+## Additional accommodation images
+
+Added eight locally bundled Pexels accommodation images (14 total) and three-photo seed galleries. Migration 3 updates only untouched original demo galleries; customized/uploaded galleries remain intact.
+
+- `npm test`: **56 tests passed**, including gallery migration and preservation checks.
+- `npm run build`: **passed**.
+- All 14 JPEGs decoded successfully and have distinct SHA-256 hashes; a contact sheet of the eight additions was visually inspected. Added download size: approximately 1.1 MB.
+- No new browser walkthrough was run for this asset/data change.

@@ -6,7 +6,18 @@ export const photos = [
   '/images/apartment-4.jpg',
   '/images/apartment-5.jpg',
   '/images/apartment-6.jpg',
+  '/images/hotel-1.jpg',
+  '/images/hotel-2.jpg',
+  '/images/hotel-3.jpg',
+  '/images/hotel-4.jpg',
+  '/images/hotel-5.jpg',
+  '/images/hotel-6.jpg',
+  '/images/hotel-7.jpg',
+  '/images/hotel-8.jpg',
 ];
+export function propertyPhotos(index: number) {
+  return [0, 5, 9].map((offset) => photos[(index + 6 + offset) % photos.length]);
+}
 export function seedData(): Data {
   const names = [
     'The Sunday Studio',

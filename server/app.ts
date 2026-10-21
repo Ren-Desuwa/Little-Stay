@@ -49,7 +49,9 @@ const bookingInput = z.object({
 });
 const imagePath = z
   .string()
-  .regex(/^\/(?:images\/apartment-[1-6]\.jpg|uploads\/[a-f0-9]{64}\.(?:jpg|png|webp))$/);
+  .regex(
+    /^\/(?:images\/(?:apartment-[1-6]|hotel-[1-8])\.jpg|uploads\/[a-f0-9]{64}\.(?:jpg|png|webp))$/,
+  );
 const propertyInput = z.object({
   title: text(2, 80),
   neighborhood: z.enum(['Camarin', 'Deparo', 'Bagumbong', 'Tala', 'Bagong Silang']),

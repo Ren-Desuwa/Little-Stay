@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { seedData, photos } from '../src/lib/seed';
+import { seedData, photos, propertyPhotos } from '../src/lib/seed';
 import { today, addDays } from '../src/lib/model';
 
 export function hashPassword(password: string) {
@@ -21,7 +21,7 @@ export function openDatabase(path: string) {
     'PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA trusted_schema=OFF;',
   );
   const version = Number((db.prepare('PRAGMA user_version').get() as any).user_version);
-  if (version > 2) {
+  if (version > 3) {
     db.close();
     throw new Error('This database uses a newer schema. Update the application before opening it.');
   }
@@ -53,6 +53,31 @@ export function openDatabase(path: string) {
       for (let i = 51; i <= 150; i++)
         retire.run(`stay-${String(i).padStart(3, '0')}`, `Fictional unit ${i}, %`);
       db.exec("INSERT OR IGNORE INTO migrations VALUES(2,datetime('now')); PRAGMA user_version=2;");
+    });
+  if (version < 3)
+    transaction(db, () => {
+      const update = db.prepare('UPDATE properties SET details=? WHERE id=?');
+      for (let i = 0; i < 150; i++) {
+        const row = db
+          .prepare('SELECT details,host_id FROM properties WHERE id=?')
+          .get(`stay-${String(i + 1).padStart(3, '0')}`) as any;
+        if (!row || !['host-1', 'host-2'].includes(row.host_id)) continue;
+        const details = JSON.parse(row.details);
+        const oldImages = [photos[i % 6], photos[(i + 1) % 6]];
+        // Upgrade only the original demo gallery; preserve uploaded and customized photos.
+        if (
+          !details.address?.startsWith(`Fictional unit ${i + 1}, `) ||
+          details.image !== oldImages[0] ||
+          JSON.stringify(details.images) !== JSON.stringify(oldImages)
+        )
+          continue;
+        const images = propertyPhotos(i);
+        update.run(
+          JSON.stringify({ ...details, image: images[0], images }),
+          `stay-${String(i + 1).padStart(3, '0')}`,
+        );
+      }
+      db.exec("INSERT OR IGNORE INTO migrations VALUES(3,datetime('now')); PRAGMA user_version=3;");
     });
   return db;
 }
@@ -109,8 +134,8 @@ export function seedDatabase(db: DatabaseSync) {
         bedrooms: propertyType === 'Studio' ? 0 : propertyType === 'House' ? 3 : 1,
         propertyType,
         address: `Fictional unit ${i + 1}, ${template.neighborhood}, North Caloocan`,
-        images: [photos[i % 6], photos[(i + 1) % 6]],
-        image: photos[i % 6],
+        images: propertyPhotos(i),
+        image: propertyPhotos(i)[0],
         houseRules: 'No smoking indoors. Quiet hours: 10 PM–7 AM. Please respect the neighborhood.',
         checkInInstructions:
           'Check in from 2 PM. Message your host for the key handover. Checkout by 11 AM.',

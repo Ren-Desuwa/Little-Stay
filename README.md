@@ -80,7 +80,7 @@ Guests can cancel their own upcoming confirmed bookings. Admins can cancel confi
 
 The default database is `.local/data/little-stay.sqlite`; user-uploaded images are in `.local/data/uploads/`. Both are ignored by Git. Sessions, accounts, bookings, conversations, favorites, reviews, and notifications live in SQL, not localStorage. The old prototype's browser data remains untouched and is not automatically imported.
 
-Schema versions 1 and 2 are applied transactionally and recorded in the migrations table. Version 2 unpublishes surplus generated listings from the previous 150-property dataset while preserving their bookings and related records. User-created listings remain unchanged. Opening a database with a newer schema is refused rather than silently downgraded.
+Schema versions 1–3 are applied transactionally and recorded in the migrations table. Version 2 unpublishes surplus generated listings from the previous 150-property dataset while preserving their bookings and related records. User-created listings remain unchanged. Version 3 upgrades untouched demo galleries to three photos while preserving customized and uploaded photos. Opening a database with a newer schema is refused rather than silently downgraded.
 
 Admin → Backups and restore downloads a JSON backup containing all application tables and referenced uploaded images. It excludes session tokens. Restoring validates the format, property data, image hashes, and foreign keys, replaces data transactionally, and signs everyone out. Log back in with an account/password from the restored backup. A failed restore leaves database records and sessions unchanged.
 
@@ -120,6 +120,6 @@ All core application behavior runs locally after dependencies are installed. Ope
 
 ## Asset acknowledgements
 
-Six bundled Unsplash apartment photographs illustrate fictional listings. Source photo IDs: `1600210492486-724fe5c67fb0`, `1600607687920-4e2a09cf159d`, `1600047509807-ba8f99d2cdde`, `1600607687939-ce8a6c25118c`, `1616486338812-3dadae4b4ace`, and `1600566753086-00f18fb6b3ea`.
+Fourteen bundled images (six Unsplash apartment photos and eight Pexels accommodation images) illustrate fictional listings. Seeded listings each have three photos. See [image credits](public/images/CREDITS.md) for the added sources and license. Original Unsplash source photo IDs: `1600210492486-724fe5c67fb0`, `1600607687920-4e2a09cf159d`, `1600047509807-ba8f99d2cdde`, `1600607687939-ce8a6c25118c`, `1616486338812-3dadae4b4ace`, and `1600566753086-00f18fb6b3ea`.
 
 DM Sans and Manrope use the SIL Open Font License; bundled license files are in `public/fonts/`. Icons are from Lucide; Leaflet renders the map. Map data © OpenStreetMap contributors. Standard tiles are requested on demand without offline prefetching.

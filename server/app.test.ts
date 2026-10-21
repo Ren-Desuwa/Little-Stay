@@ -528,6 +528,32 @@ describe('full local API', () => {
       migrated.close();
     }
   });
+  it('updates legacy demo galleries while preserving customized photos', () => {
+    runtime.db
+      .prepare(
+        "UPDATE properties SET details=json_set(details,'$.image','/images/apartment-1.jpg','$.images',json(?)) WHERE id='stay-001'",
+      )
+      .run(JSON.stringify(['/images/apartment-1.jpg', '/images/apartment-2.jpg']));
+    runtime.db
+      .prepare(
+        "UPDATE properties SET details=json_set(details,'$.image','/uploads/custom.jpg','$.images',json(?)) WHERE id='stay-002'",
+      )
+      .run(JSON.stringify(['/uploads/custom.jpg']));
+    runtime.db.exec('PRAGMA user_version=2');
+    const migrated = openDatabase(join(directory, 'test.sqlite'));
+    try {
+      const details = (id: string) =>
+        JSON.parse(
+          (migrated.prepare('SELECT details FROM properties WHERE id=?').get(id) as any).details,
+        );
+      expect(details('stay-001').images).toHaveLength(3);
+      expect(details('stay-001').image).toBe('/images/hotel-1.jpg');
+      expect(details('stay-002').images).toEqual(['/uploads/custom.jpg']);
+      expect(details('stay-002').image).toBe('/uploads/custom.jpg');
+    } finally {
+      migrated.close();
+    }
+  });
   it('refuses to downgrade a database from a newer schema', () => {
     runtime.db.exec('PRAGMA user_version=99');
     expect(() => openDatabase(join(directory, 'test.sqlite'))).toThrow(/newer schema/);
