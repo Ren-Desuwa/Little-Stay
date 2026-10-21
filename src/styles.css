@@ -2624,8 +2624,8 @@ footer .text-button {
   }
 }
 
-/* Highlight search without changing its original dimensions. */
-.search-bar .search-location {
+/* Highlight only the text input, keeping the surrounding label unchanged. */
+.search-bar .search-location input {
   background: #f0f5e9;
-  border-radius: 8px;
+  border-radius: 4px;
 }
