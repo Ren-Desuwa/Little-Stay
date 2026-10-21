@@ -1,3 +1,4 @@
+import { region } from './region';
 import { HashTable, indexById, matchText, geoBounds } from './algorithms';
 export type Role = 'guest' | 'host' | 'admin';
 export type User = { id: string; name: string; role: Role };
@@ -173,7 +174,7 @@ export function saveProperty(data: Data, actor: User, property: Property): Data 
     property.lng < geoBounds.west ||
     property.lng > geoBounds.east
   )
-    throw new Error('Place the property inside the supported Makati map area.');
+    throw new Error(`Place the property inside the supported ${region.name} map area.`);
   const safe = {
     ...property,
     title: property.title.trim(),
@@ -196,7 +197,7 @@ export function toggleSuspension(data: Data, actor: User, id: string): Data {
   };
 }
 export const searchableText = (p: Property) =>
-  `${p.title} ${p.neighborhood} Makati ${p.amenities.join(' ')}`;
+  `${p.title} ${p.neighborhood} ${region.name} ${p.amenities.join(' ')}`;
 export type Filters = {
   query: string;
   maxPrice: number;

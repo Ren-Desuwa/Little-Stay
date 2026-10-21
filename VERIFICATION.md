@@ -1,6 +1,6 @@
 # Verification record
 
-Verified on October 21, 2026. The project runs locally through Vite; no hosted deployment was created.
+Verified on October 21, 2026. The project runs locally through Vite; no hosted deployment was created. The original walkthrough below records the Makati prototype on main; the full branch relocation is recorded at the end.
 
 ## Automated checks
 
@@ -37,3 +37,13 @@ Completed through the Codex in-app browser:
 - This is a local prototype, not a security-tested production system. Account switching is simulated. Concurrent tabs and real authentication are intentionally unsupported.
 
 The browser demo was reset after testing. Temporary test reservations and price/suspension edits were removed.
+
+## North Caloocan relocation on full
+
+- `npm test`: **30 tests passed**. Added checks that all fifteen fictional coordinates lie within the configured search extent, neighborhood/city search uses North Caloocan, and the previous prototype storage key is preserved.
+- `npm run build`: **passed**, including TypeScript.
+- Browser checks: `Camarin` returned three listings, `North Caloocan` returned all fifteen, and the geographic map and Voronoi overlay rendered the relocated seeds. A pin selected Slow Mornings Suite in Camarin with an approximate distance of 0.76 km.
+- The map extent and local projection now come from `src/lib/region.ts`; host coordinate validation and default placement use the same configuration. This rectangular extent is not an official city boundary.
+- The new seed dataset uses its own browser-storage key. Existing data from the original prototype is retained under its original key.
+- Geographic context was checked against [OpenStreetMap-derived Camarin information](https://mapcarta.com/N8245173538) and the [JICA National Schools Building Inventory](https://openjicareport.jica.go.jp/pdf/12309209_05.pdf). Listing coordinates are fictional approximate points, not actual rental addresses. Existing bundled photos and prices remain illustrative.
+- This change relocates the working prototype. Real account authentication, a local API, and SQL persistence are still planned for the full implementation.

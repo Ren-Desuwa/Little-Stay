@@ -1,3 +1,4 @@
+import { region } from './region';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import {
   addDays,
@@ -14,7 +15,7 @@ import {
   type Filters,
 } from './model';
 import { seedData } from './seed';
-import { loadData, persistData } from './storage';
+import { loadData, persistData, STORAGE_KEY } from './storage';
 
 const now = '2030-01-01';
 const booking = { propertyId: 'stay-01', checkIn: '2030-01-10', checkOut: '2030-01-13', guests: 2 };
@@ -152,11 +153,22 @@ describe('listing management and search', () => {
     expect(next.properties).toHaveLength(16);
     expect(buildIndexes(next).properties.get('new-stay')?.title).toBe('New listing');
   });
+  it('places every fictional listing inside the North Caloocan search area', () => {
+    const d = fresh();
+    for (const p of d.properties) {
+      expect(p.lat).toBeGreaterThanOrEqual(region.bounds.south);
+      expect(p.lat).toBeLessThanOrEqual(region.bounds.north);
+      expect(p.lng).toBeGreaterThanOrEqual(region.bounds.west);
+      expect(p.lng).toBeLessThanOrEqual(region.bounds.east);
+    }
+    expect(findProperties(d, { ...filters, query: 'Camarin' })).toHaveLength(3);
+    expect(findProperties(d, { ...filters, query: 'Makati' })).toHaveLength(0);
+  });
   it('filters, sorts, and fuzzy-matches live listings', () => {
     const d = fresh();
     const all = findProperties(d, filters);
     expect(all).toHaveLength(15);
-    expect(findProperties(d, { ...filters, query: 'Makati' })).toHaveLength(15);
+    expect(findProperties(d, { ...filters, query: 'North Caloocan' })).toHaveLength(15);
     const balcony = findProperties(d, { ...filters, query: 'blacony' });
     expect(balcony.length).toBeGreaterThan(0);
     expect(balcony.every((r) => r.property.amenities.includes('Balcony'))).toBe(true);
@@ -196,6 +208,15 @@ describe('local persistence and fresh demo', () => {
     });
     return entries;
   }
+  it('starts the North Caloocan dataset without overwriting saved prototype data', () => {
+    const entries = mockStorage();
+    entries['little-stay-data-v1'] = 'original prototype data';
+    const fresh = loadData();
+    expect(fresh.data.properties[0].neighborhood).toBe('Camarin');
+    persistData(fresh.data);
+    expect(entries['little-stay-data-v1']).toBe('original prototype data');
+    expect(entries[STORAGE_KEY]).toBeTruthy();
+  });
   it('round trips mutations and rebuilds lookup indexes on reload', () => {
     mockStorage();
     const d = fresh(),
@@ -210,7 +231,7 @@ describe('local persistence and fresh demo', () => {
   });
   it('recovers corrupt data and reports storage failures', () => {
     const entries = mockStorage();
-    entries['little-stay-data-v1'] = 'invalid';
+    entries[STORAGE_KEY] = 'invalid';
     expect(loadData().warning).not.toBe('');
     vi.stubGlobal('localStorage', {
       getItem: () => {

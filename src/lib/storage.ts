@@ -1,6 +1,6 @@
 import { validDate, type Data } from './model';
 import { seedData } from './seed';
-export const STORAGE_KEY = 'little-stay-data-v1';
+export const STORAGE_KEY = 'little-stay-north-caloocan-data-v1';
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue =>
   typeof value === 'object' && value !== null;

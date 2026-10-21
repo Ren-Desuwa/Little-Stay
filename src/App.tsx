@@ -1,3 +1,4 @@
+import { region } from './lib/region';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   ArrowDownUp,
@@ -161,14 +162,14 @@ function App() {
       id: `stay-${crypto.randomUUID()}`,
       hostId: user.id,
       title: '',
-      neighborhood: 'Salcedo Village',
+      neighborhood: region.defaultNeighborhood,
       description: '',
       price: 2500,
       capacity: 2,
       bedrooms: 1,
       amenities: ['WiFi', 'Air conditioning'],
-      lat: 14.558,
-      lng: 121.024,
+      lat: region.defaultPropertyLocation.lat,
+      lng: region.defaultPropertyLocation.lng,
       image: photos[0],
       published: false,
       suspended: false,
@@ -251,7 +252,8 @@ function App() {
                 </h1>
                 <p>
                   Thoughtfully chosen spaces for your next city chapter.
-                  <br className="desktop-break" /> Find your kind of stay, right here in Makati.
+                  <br className="desktop-break" /> Find your kind of stay, right here in North
+                  Caloocan.
                 </p>
                 <div className="hero-note">
                   <span className="mini-avatars">
@@ -274,7 +276,7 @@ function App() {
                 <div className="photo-shade" />
                 <div className="hero-photo-caption">
                   <span>
-                    <MapPin size={14} /> SALCEDO VILLAGE, MAKATI
+                    <MapPin size={14} /> CAMARIN, NORTH CALOOCAN
                   </span>
                   <strong>Your slow morning starts here.</strong>
                 </div>
@@ -307,7 +309,7 @@ function App() {
                   <b>Where to?</b>
                   <input
                     aria-label="Search properties and amenities"
-                    placeholder="Makati, a neighborhood, or an amenity"
+                    placeholder="North Caloocan, a neighborhood, or an amenity"
                     value={filters.query}
                     onChange={(e) => updateFilters({ query: e.target.value })}
                   />
@@ -458,7 +460,7 @@ function App() {
                     Good places. Great stays<span className="green-dot">.</span>
                   </h2>
                   <p>
-                    {properties.length} thoughtfully chosen stays in Makati
+                    {properties.length} thoughtfully chosen stays in North Caloocan
                     {filters.query && ` matching “${filters.query}”`}
                   </p>
                 </div>
@@ -971,7 +973,7 @@ function PropertyCard({
         <div className="card-neighborhood">
           <MapPin size={11} />
           {p.neighborhood}
-          <span>MAKATI</span>
+          <span>NORTH CALOOCAN</span>
         </div>
         <button className="card-title" onClick={onOpen}>
           {p.title}
@@ -1048,7 +1050,7 @@ function BookingModal({
           <img className="detail-photo" src={p.image} alt={`${p.title} apartment interior`} />
           <div className="detail-location">
             <MapPin size={15} />
-            {p.neighborhood}, Makati
+            {p.neighborhood}, North Caloocan
           </div>
           <h3>A little room to feel at home.</h3>
           <p>{p.description}</p>
@@ -1297,7 +1299,9 @@ function PropertyEditor({
           </div>
         </fieldset>
         <h3>Place it on the map</h3>
-        <p className="muted-copy">Click inside the Makati area or enter coordinates below.</p>
+        <p className="muted-copy">
+          Click inside the North Caloocan area or enter coordinates below.
+        </p>
         <StayMap
           properties={[]}
           pin={{ lat: draft.lat, lng: draft.lng }}

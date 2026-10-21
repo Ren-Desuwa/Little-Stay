@@ -1,3 +1,4 @@
+import { region } from '../lib/region';
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -40,11 +41,13 @@ export default function StayMap({
     );
     const instance = L.map(root.current, {
       zoomControl: true,
-      minZoom: 13,
+      minZoom: 12,
       maxZoom: 18,
       maxBounds: bounds.pad(0.08),
       maxBoundsViscosity: 1,
-    }).setView([14.5578, 121.025], compact ? 14 : 15);
+    }).fitBounds(bounds, { padding: [24, 40], maxZoom: 14 });
+    if (compact && properties.length === 1)
+      instance.setView([properties[0].lat, properties[0].lng], 14);
     map.current = instance;
     const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution:
@@ -129,7 +132,9 @@ export default function StayMap({
         ref={root}
         className="leaflet-map"
         aria-label={
-          editing ? 'Choose property coordinates on the Makati map' : 'Makati rental properties map'
+          editing
+            ? `Choose property coordinates on the ${region.name} map`
+            : `${region.name} rental properties map`
         }
       />
       <div className="map-instruction">
@@ -137,7 +142,7 @@ export default function StayMap({
           ? 'Click the map to place your property'
           : onPin
             ? 'Click anywhere to find your nearest stay'
-            : 'Property location · Makati City'}
+            : `Property location · ${region.name}`}
       </div>
       {tileState !== 'ready' && (
         <div className="map-notice" role="status">
@@ -146,7 +151,7 @@ export default function StayMap({
             : 'Street tiles unavailable. Pins and geometry still work; internet is needed for streets.'}
         </div>
       )}
-      <span className="map-area">MAKATI CITY · DEMO AREA</span>
+      <span className="map-area">{region.mapLabel} · DEMO AREA</span>
     </div>
   );
 }

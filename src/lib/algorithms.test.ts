@@ -1,3 +1,4 @@
+import { region } from './region';
 import { describe, expect, it } from 'vitest';
 import {
   HashTable,
@@ -61,8 +62,8 @@ describe('Levenshtein and multiword search', () => {
     expect(matchText('blacony', 'balcony').accepted).toBe(true);
   });
   it('normalizes accents and requires every query word to match', () => {
-    expect(matchText('SALCÉDO blacony', 'Salcedo Village Balcony').accepted).toBe(true);
-    expect(matchText('balcony helicopter', 'Salcedo balcony').accepted).toBe(false);
+    expect(matchText('CAMARÍN blacony', 'Camarin Balcony').accepted).toBe(true);
+    expect(matchText('balcony helicopter', 'Camarin balcony').accepted).toBe(false);
     expect(matchText('   ', '').accepted).toBe(true);
     expect(matchText('pool', '').accepted).toBe(false);
     expect(matchText('balcony', 'balcony').score).toBeLessThan(
@@ -75,9 +76,12 @@ describe('bounded Voronoi clipping and point location', () => {
   const sites = seedData().properties;
   it('agrees with brute force over a deterministic grid', () => {
     const cells = voronoi(sites);
-    for (let x = -1.9; x <= 2; x += 0.137)
-      for (let y = -1.9; y <= 1.9; y += 0.173) {
-        const point = { x, y };
+    for (let column = 0; column < 31; column++)
+      for (let row = 0; row < 25; row++) {
+        const point = {
+          x: planeBounds[0].x + ((planeBounds[2].x - planeBounds[0].x) * (column + 0.5)) / 31,
+          y: planeBounds[0].y + ((planeBounds[2].y - planeBounds[0].y) * (row + 0.5)) / 25,
+        };
         expect(locateCell(point, cells)).toBe(nearestSite(point, sites)?.id);
       }
   });
@@ -93,14 +97,14 @@ describe('bounded Voronoi clipping and point location', () => {
   });
   it('uses lowest IDs for coincident sites and shared boundaries', () => {
     const same = [
-      { id: 'b', lat: 14.558, lng: 121.024 },
-      { id: 'a', lat: 14.558, lng: 121.024 },
+      { id: 'b', ...region.center },
+      { id: 'a', ...region.center },
     ];
     expect(locateCell({ x: 0, y: 0 }, voronoi(same))).toBe('a');
     expect(voronoi(same).find((c) => c.id === 'b')?.polygon).toEqual([]);
     const pair = [
-      { id: 'b', lat: 14.558, lng: 121.03 },
-      { id: 'a', lat: 14.558, lng: 121.018 },
+      { id: 'b', lat: region.center.lat, lng: region.center.lng + 0.006 },
+      { id: 'a', lat: region.center.lat, lng: region.center.lng - 0.006 },
     ];
     expect(locateCell({ x: 0, y: 0 }, voronoi(pair))).toBe('a');
   });

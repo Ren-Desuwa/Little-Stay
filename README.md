@@ -2,6 +2,10 @@
 
 A local short-term rental booking prototype for an algorithms project. Built with React, TypeScript, Vite, and Leaflet. No backend, API key, or payment account is required.
 
+## Branch status
+
+The `full` branch currently relocates the working prototype to North Caloocan. The next stage is a local backend, real accounts, and SQL persistence; those features are not implemented yet. `main` retains the original demo.
+
 ## Run locally
 
 Use Node.js 22.12+ (or Node.js 20.19+).
@@ -33,16 +37,16 @@ Select an account in the upper-right corner. The default is Alex Santos. Switchi
 | Marco Lim    | Host  | Own seven seeded listings and associated reservations                 |
 | Sam Rivera   | Admin | All listings, reservations, and accounts; suspension and cancellation |
 
-All accounts, properties, reservations, and locations are fictional. Coordinates are placed around Makati. Interface ownership checks demonstrate role behavior; localStorage and simulated accounts are not real authentication or authorization. Use one active tab. Data is stored under `little-stay-data-v1` in this browser and origin. It is not shared with other browsers or machines. The heart buttons are session-only conveniences.
+All accounts, properties, reservations, and locations are fictional. Coordinates are approximate fictional points around Camarin, Deparo, Bagumbong, Tala, and Bagong Silang in North Caloocan. The rectangular map extent is a search area, not an official municipal boundary. Interface ownership checks demonstrate role behavior; localStorage and simulated accounts are not real authentication or authorization. Use one active tab. Data is stored under `little-stay-north-caloocan-data-v1` in this browser and origin. The original Makati prototype data remains under its previous storage key and is not modified. It is not shared with other browsers or machines. The heart buttons are session-only conveniences.
 
 ## Suggested presentation walkthrough
 
-1. Search for `blacony`. Show that the results match the Balcony amenity. Combine `salcedo blacony` to show every query word must match. `Makati` searches all listings.
+1. Search for `blacony`. Show that the results match the Balcony amenity. Combine `camarin blacony` to show every query word must match. `North Caloocan` searches all listings.
 2. Filter by capacity, amenities, price, and dates. Sort by nightly price. The maximum-price slider's rightmost position means no limit.
 3. Open a property, select future check-in and checkout dates, and reserve. Show the booking reference and total in My bookings. Refresh to demonstrate persistence. Switch to Jamie to show that Alex's booking is inaccessible, including by reference lookup.
 4. Switch to Isabel. Edit The Sunday Studio's price or create a listing, choosing a bundled photo and map location. Publish/unpublish it. Existing reservations retain their booked nightly rate.
 5. Switch to Sam. Suspend a listing, verify it is absent from search, then restore it. Existing bookings remain visible. Admin cancellation releases booked dates.
-6. In Map view, enable Voronoi regions and click inside the bounded Makati area. Show the nearest matching property and approximate straight-line distance. Filters change the seed set.
+6. In Map view, enable Voronoi regions and click inside the bounded North Caloocan area. Show the nearest matching property and approximate straight-line distance. Filters change the seed set.
 7. Open Algorithm lab. Select seven hash buckets to expose collisions, then look up a key in a chain. Compare `blacony` with `balcony` in the fuzzy tab. Use the Voronoi step slider to show successive half-plane clips.
 8. Use Reset demo in the footer. Confirm to restore the original five users, fifteen listings, and two sample bookings. Sample bookings are seeded relative to the reset date.
 

@@ -1,3 +1,4 @@
+import { region } from './region';
 /** A separate-chaining hash table. Native Map is deliberately not used. */
 export class HashTable<T> {
   buckets: { key: string; value: T }[][];
@@ -95,8 +96,8 @@ export function matchText(query: string, text: string) {
 export type Point = { x: number; y: number };
 export type Site = { id: string; lat: number; lng: number };
 export type Cell = { id: string; polygon: Point[] };
-const origin = { lat: 14.558, lng: 121.024 };
-export const geoBounds = { south: 14.539, north: 14.577, west: 121.003, east: 121.046 };
+const origin = region.center;
+export const geoBounds = region.bounds;
 const longitudeScale = 111.32 * Math.cos((origin.lat * Math.PI) / 180);
 export function project(lat: number, lng: number): Point {
   return { x: (lng - origin.lng) * longitudeScale, y: (lat - origin.lat) * 111.32 };
@@ -172,7 +173,7 @@ export function nearestSite(pin: Point, sites: Site[]) {
 export function constructionSteps(site: Site, sites: Site[]) {
   const p = project(site.lat, site.lng);
   let polygon = planeBounds.map((v) => ({ ...v }));
-  const steps = [{ label: 'Start with the bounded Makati area', polygon }];
+  const steps = [{ label: `Start with the bounded ${region.name} area`, polygon }];
   for (const other of [...sites].sort((a, b) => a.id.localeCompare(b.id))) {
     if (site.id === other.id) continue;
     const q = project(other.lat, other.lng);
