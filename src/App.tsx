@@ -290,8 +290,6 @@ function App() {
             </section>
             <form
               className="search-bar"
-              role="search"
-              aria-label="Find a property"
               onSubmit={(e) => {
                 e.preventDefault();
                 try {
@@ -303,18 +301,13 @@ function App() {
                 }
               }}
             >
-              <div className="search-heading">
-                <span>Find your next stay</span>
-                <small>Search by name, neighborhood, or amenity</small>
-              </div>
               <label className="search-location">
-                <Search size={23} />
+                <MapPin size={19} />
                 <span>
-                  <b>Search stays</b>
+                  <b>Where to?</b>
                   <input
                     aria-label="Search properties and amenities"
-                    placeholder="Try balcony or Salcedo"
-                    maxLength={120}
+                    placeholder="Makati, a neighborhood, or an amenity"
                     value={filters.query}
                     onChange={(e) => updateFilters({ query: e.target.value })}
                   />
