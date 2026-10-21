@@ -50,9 +50,9 @@ function listing() {
 }
 
 describe('full local API', () => {
-  it('seeds 150 dense, geographically valid listings without leaking credentials or reservations', async () => {
+  it('seeds 50 dense, geographically valid listings without leaking credentials or reservations', async () => {
     const d = await state();
-    expect(d.properties).toHaveLength(150);
+    expect(d.properties).toHaveLength(50);
     expect(d.reservations).toEqual([]);
     expect(d.currentUser).toBeNull();
     expect(JSON.stringify(d)).not.toContain('password_hash');
@@ -422,7 +422,7 @@ describe('full local API', () => {
       .expect(200);
     const backup = (await admin.get('/api/admin/backup').expect(200)).body;
     expect(backup.images).toHaveLength(1);
-    expect(backup.tables.properties).toHaveLength(150);
+    expect(backup.tables.properties).toHaveLength(50);
     await a.post(`/api/bookings/${bid}/cancel`).set(appHeader).expect(200);
     await admin
       .post('/api/admin/restore')
@@ -444,7 +444,7 @@ describe('full local API', () => {
       .attach('backup', Buffer.from('{"version":99}'), 'backup.json')
       .expect(400);
     expect((await state(admin)).currentUser.role).toBe('admin');
-    expect((await state()).properties).toHaveLength(150);
+    expect((await state()).properties).toHaveLength(50);
   });
   it('persists data when the application process is reopened', async () => {
     const a = await login();
@@ -460,7 +460,7 @@ describe('full local API', () => {
     });
     const current = await login();
     expect((await state(current)).currentUser.name).toBe('Persistent Alex');
-    expect((await state()).properties).toHaveLength(150);
+    expect((await state()).properties).toHaveLength(50);
   });
   it('rolls back an invalid backup relationship without deleting active sessions', async () => {
     const admin = await login('admin');
@@ -472,7 +472,7 @@ describe('full local API', () => {
       .attach('backup', Buffer.from(JSON.stringify(backup)), 'invalid.json')
       .expect(400);
     expect((await state(admin)).currentUser.role).toBe('admin');
-    expect((await state()).properties).toHaveLength(150);
+    expect((await state()).properties).toHaveLength(50);
   });
   it('rate-limits repeated unsuccessful sign-ins', async () => {
     for (let i = 0; i < 6; i++)
@@ -492,6 +492,41 @@ describe('full local API', () => {
     const admin = await login('admin');
     const result = await admin.get('/api/reports?format=csv').expect(200);
     expect(result.text).toContain("'=UNTRUSTED()");
+  });
+  it('retires surplus legacy seeds while preserving bookings and custom listings', () => {
+    const columns =
+      'host_id,title,neighborhood,price,capacity,lat,lng,published,suspended,approval,details';
+    runtime.db.exec(
+      `INSERT INTO properties SELECT 'stay-051',${columns} FROM properties WHERE id='stay-001'`,
+    );
+    runtime.db
+      .prepare(
+        "UPDATE properties SET details=json_set(details,'$.address','Fictional unit 51, Camarin, North Caloocan') WHERE id='stay-051'",
+      )
+      .run();
+    runtime.db.exec(
+      `INSERT INTO properties SELECT 'custom-listing',${columns} FROM properties WHERE id='stay-001'`,
+    );
+    runtime.db.exec(
+      "UPDATE reservations SET property_id='stay-051' WHERE id='res-demo-1'; PRAGMA user_version=1;",
+    );
+    const migrated = openDatabase(join(directory, 'test.sqlite'));
+    try {
+      expect(
+        migrated.prepare("SELECT published FROM properties WHERE id='stay-051'").get(),
+      ).toMatchObject({ published: 0 });
+      expect(
+        migrated.prepare("SELECT published FROM properties WHERE id='custom-listing'").get(),
+      ).toMatchObject({ published: 1 });
+      expect(
+        migrated.prepare("SELECT property_id FROM reservations WHERE id='res-demo-1'").get(),
+      ).toMatchObject({ property_id: 'stay-051' });
+      expect(migrated.prepare('SELECT COUNT(*) AS n FROM reservations').get()).toMatchObject({
+        n: 6,
+      });
+    } finally {
+      migrated.close();
+    }
   });
   it('refuses to downgrade a database from a newer schema', () => {
     runtime.db.exec('PRAGMA user_version=99');

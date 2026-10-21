@@ -39,7 +39,7 @@ The API restarts when its source changes during development. Existing sessions a
 
 ## Local accounts and seed data
 
-A fresh database automatically seeds **150 fictional properties**, five accounts, six sample reservations covering upcoming/current/completed stays, and one sample review. Listings are densely distributed around Camarin, Deparo, Bagumbong, Tala, and Bagong Silang. The map extent is a rectangular search area, not an official city boundary. Addresses, coordinates, photos, and prices are illustrative, not verified rental offers.
+A fresh database automatically seeds **50 fictional properties**, five accounts, six sample reservations covering upcoming/current/completed stays, and one sample review. Listings are densely distributed around Camarin, Deparo, Bagumbong, Tala, and Bagong Silang. The map extent is a rectangular search area, not an official city boundary. Addresses, coordinates, photos, and prices are illustrative, not verified rental offers.
 
 All seeded accounts initially use **`LittleStay123!`**. Use **Sign in**, or expand the seeded-account helper to fill the login form. These are real password-checked sessions, not a role-switching dropdown. Change seeded passwords in Profile if you use the local application beyond testing.
 
@@ -58,7 +58,7 @@ New registrations can request Guest or Host access. Host accounts start pending 
 - **Accounts:** registration, login/logout, editable name/bio, password changes, database-backed sessions, guest/host/admin permissions, host approvals, account suspension/restore.
 - **Properties:** host-owned listing creation/editing, neighborhood/type, address, guest capacity, bedrooms, amenities, nightly prices, multiple images and cover selection, house rules, private check-in instructions, map placement, publish/unpublish, admin approval/rejection and suspension/restore.
 - **Search:** custom typo-tolerant matching across titles/neighborhoods/amenities, dates, capacity, price, bedrooms, neighborhood, property type, price sorting, and persisted saved stays. Cards load in batches of 24.
-- **Maps:** 150 seeds, price markers, clustered counts, zoom into clusters, maximum-zoom property chooser, custom Voronoi overlay, pin-based nearest matching property, and approximate straight-line distance.
+- **Maps:** 50 seeds, price markers, clustered counts, zoom into clusters, maximum-zoom property chooser, custom Voronoi overlay, pin-based nearest matching property, and approximate straight-line distance.
 - **Bookings:** visual availability calendar, instant confirmation, unique references, server-side capacity/date/availability checks inside SQLite transactions, preserved booked rates, history, upcoming cancellation, host/admin check-in and checkout, printable booking summaries.
 - **Host calendars:** block/unblock nights for personal use or maintenance; reservations and other blocks cannot overlap. Removing a block releases those nights.
 - **Messages:** private guest–host conversations opened from property details, persisted messages, scoped participant access, and notifications. Admins do not receive access to private conversations through the dashboard.
@@ -80,7 +80,7 @@ Guests can cancel their own upcoming confirmed bookings. Admins can cancel confi
 
 The default database is `.local/data/little-stay.sqlite`; user-uploaded images are in `.local/data/uploads/`. Both are ignored by Git. Sessions, accounts, bookings, conversations, favorites, reviews, and notifications live in SQL, not localStorage. The old prototype's browser data remains untouched and is not automatically imported.
 
-Schema version 1 is applied transactionally on a fresh database and recorded in the migrations table. Opening a database with a newer schema is refused rather than silently downgraded.
+Schema versions 1 and 2 are applied transactionally and recorded in the migrations table. Version 2 unpublishes surplus generated listings from the previous 150-property dataset while preserving their bookings and related records. User-created listings remain unchanged. Opening a database with a newer schema is refused rather than silently downgraded.
 
 Admin → Backups and restore downloads a JSON backup containing all application tables and referenced uploaded images. It excludes session tokens. Restoring validates the format, property data, image hashes, and foreign keys, replaces data transactionally, and signs everyone out. Log back in with an account/password from the restored backup. A failed restore leaves database records and sessions unchanged.
 
@@ -103,7 +103,7 @@ Passwords use Node's `scrypt` with random salts. Session tokens use cryptographi
 
 ## Suggested walkthrough
 
-1. Browse 150 stays, search `camarin blacony`, try property/bedroom filters, and use the clustered map and nearest-pin selection.
+1. Browse 50 stays, search `camarin blacony`, try property/bedroom filters, and use the clustered map and nearest-pin selection.
 2. Register a guest or sign in as Alex. Save a stay, reserve future dates, refresh, inspect its booking summary, and message the host.
 3. Sign in as Isabel to read/reply, manage her listings, block dates, and check in the seeded stay beginning today (`LS-DEMO0004`). Record checkout to unlock Alex's review.
 4. Register a Host account; observe its pending status and disabled listing creation. Sign in as admin to approve it.

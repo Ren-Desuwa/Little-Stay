@@ -21,7 +21,7 @@ export function openDatabase(path: string) {
     'PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA trusted_schema=OFF;',
   );
   const version = Number((db.prepare('PRAGMA user_version').get() as any).user_version);
-  if (version > 1) {
+  if (version > 2) {
     db.close();
     throw new Error('This database uses a newer schema. Update the application before opening it.');
   }
@@ -44,6 +44,16 @@ export function openDatabase(path: string) {
     INSERT OR IGNORE INTO migrations VALUES(1,datetime('now'));
     PRAGMA user_version=1;`),
     );
+  if (version < 2)
+    transaction(db, () => {
+      // Retain historical bookings and related records; retire only surplus generated listings.
+      const retire = db.prepare(`UPDATE properties SET published=0 WHERE id=?
+        AND host_id IN ('host-1','host-2')
+        AND json_extract(details,'$.address') LIKE ?`);
+      for (let i = 51; i <= 150; i++)
+        retire.run(`stay-${String(i).padStart(3, '0')}`, `Fictional unit ${i}, %`);
+      db.exec("INSERT OR IGNORE INTO migrations VALUES(2,datetime('now')); PRAGMA user_version=2;");
+    });
   return db;
 }
 export function transaction<T>(db: DatabaseSync, work: () => T): T {
@@ -76,7 +86,7 @@ export function seedDatabase(db: DatabaseSync) {
           '',
         ),
     );
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 50; i++) {
       const template = base.properties[i % 15];
       const ring = Math.floor(i / 15);
       const angle = (i * 137.508 * Math.PI) / 180;

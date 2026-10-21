@@ -51,3 +51,11 @@ Tested the development application and production build in the in-app browser us
 - Seed properties, addresses, prices, and approximate coordinates are fictional. The rectangular North Caloocan demo extent is not an official administrative boundary.
 
 QA data was isolated under temporary directories and is not included in the repository. The original `main` branch remains the earlier localStorage prototype.
+
+## Reduction to 50 stays
+
+The seed generator now creates 50 fictional listings. Schema migration 2 unpublishes the surplus generated listings (51–150) in existing databases without deleting bookings, messages, reviews, or user-created listings. Historical 150-listing walkthrough results above describe the previous dataset.
+
+- `npm test`: **55 tests passed**, including the new legacy-data migration regression.
+- `npm run build`: **passed**.
+- No new browser walkthrough was run for this data-only change.
