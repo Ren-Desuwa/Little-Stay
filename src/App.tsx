@@ -24,7 +24,11 @@ import {
   CalendarDays,
   Building2,
   FlaskConical,
-  RotateCcw,
+  Bell,
+  MessageCircle,
+  UserCircle,
+  LogOut,
+  BarChart3,
   CheckCircle2,
 } from 'lucide-react';
 import StayMap from './components/StayMap';
@@ -35,22 +39,31 @@ import {
   amenities,
   available,
   buildIndexes,
-  cancelBooking,
-  createBooking,
   findProperties,
   money,
   nights,
-  saveProperty,
   today,
-  toggleSuspension,
   validateDates,
   type Data,
   type Filters,
   type Property,
   type User,
+  type Reservation,
 } from './lib/model';
-import { photos, seedData } from './lib/seed';
-import { loadData, persistData } from './lib/storage';
+import { photos } from './lib/seed';
+import { emptyData, getState, change, request } from './lib/api';
+import {
+  AuthModal,
+  AccountPage,
+  MessagesPage,
+  NotificationsPage,
+  HostTools,
+  AdminTools,
+  GuestReviews,
+  ReportsPage,
+  AvailabilityCalendar,
+  BookingSummary,
+} from './components/FullFeatures';
 
 const defaultFilters: Filters = {
   query: '',
@@ -68,9 +81,10 @@ const formatDate = (value: string) =>
     year: 'numeric',
   });
 function App() {
-  const [initial] = useState(loadData),
-    [data, setData] = useState<Data>(initial.data),
-    [userId, setUserId] = useState('guest-1');
+  const [data, setData] = useState<Data>(emptyData);
+  const [authOpen, setAuthOpen] = useState(false),
+    [loading, setLoading] = useState(true),
+    [connectionError, setConnectionError] = useState('');
   const [page, setPage] = useState(() => window.location.hash.slice(1) || 'explore');
   const [filters, setFilters] = useState<Filters>(defaultFilters),
     [filtersOpen, setFiltersOpen] = useState(false),
@@ -80,18 +94,56 @@ function App() {
     [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
   const [detail, setDetail] = useState<string | null>(null),
     [editing, setEditing] = useState<Property | null>(null),
-    [notice, setNotice] = useState(initial.warning);
+    [notice, setNotice] = useState('');
   const [confirmation, setConfirmation] = useState<{
     title: string;
     body: string;
-    action: () => void;
+    action: () => void | Promise<unknown>;
   } | null>(null);
-  const [favorites, setFavorites] = useState<string[]>([]),
-    [category, setCategory] = useState('All stays');
+  const favorites = data.favorites ?? [];
+  const [category, setCategory] = useState('All stays');
   const indexes = useMemo(() => buildIndexes(data), [data]);
-  const user = indexes.users.get(userId) ?? data.users[0];
+  const user: User = data.currentUser ?? { id: 'visitor', name: 'Visitor', role: 'guest' };
+  const loggedIn = !!data.currentUser;
+  const fullProps = { data, user, onData: setData, onNotice: setNotice };
+  async function refresh() {
+    try {
+      setData(await getState());
+      setConnectionError('');
+    } catch (e) {
+      setConnectionError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    void refresh();
+  }, []);
+  useEffect(() => {
+    let active = true;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible')
+        getState()
+          .then((next) => {
+            if (active) {
+              setData((current) =>
+                JSON.stringify(current) === JSON.stringify(next) ? current : next,
+              );
+              setConnectionError('');
+              setLoading(false);
+            }
+          })
+          .catch(() => {});
+    }, 10000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [user.id]);
   const results = useMemo(() => findProperties(data, filters), [data, filters]);
   const properties = useMemo(() => results.map((r) => r.property), [results]);
+  const [visibleCount, setVisibleCount] = useState(24);
+  useEffect(() => setVisibleCount(24), [filters]);
   const cells = useMemo(() => voronoi(properties), [properties]);
   const nearestId = pin ? locateCell(project(pin.lat, pin.lng), cells) : undefined;
   const nearest = nearestId ? indexes.properties.get(nearestId) : undefined;
@@ -110,24 +162,26 @@ function App() {
     setPage(next);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
-  function commit(next: Data, message: string) {
+  async function perform(action: () => Promise<Data>, message: string) {
     try {
-      persistData(next);
-    } catch {
-      setNotice('Browser storage is unavailable or full. Your change was not saved.');
-      return false;
-    }
-    setData(next);
-    setNotice(message);
-    return true;
-  }
-  function perform(action: () => Data, message: string) {
-    try {
-      return commit(action(), message);
+      const next = await action();
+      setData(next);
+      setNotice(message);
+      return true;
     } catch (e) {
       setNotice((e as Error).message);
       return false;
     }
+  }
+  function toggleFavorite(id: string) {
+    if (!loggedIn) {
+      setAuthOpen(true);
+      return;
+    }
+    void perform(
+      () => change(`/favorites/${id}`),
+      favorites.includes(id) ? 'Stay removed from favorites.' : 'Stay saved.',
+    );
   }
   function updateFilters(patch: Partial<Filters>) {
     setFilters((f) => ({ ...f, ...patch }));
@@ -173,6 +227,12 @@ function App() {
       image: photos[0],
       published: false,
       suspended: false,
+      images: [photos[0]],
+      address: '',
+      propertyType: 'Apartment',
+      houseRules: 'No smoking indoors. Quiet hours: 10 PM–7 AM.',
+      checkInInstructions: 'Check in from 2 PM. Checkout by 11 AM.',
+      approval: 'pending',
     });
   }
   return (
@@ -199,45 +259,105 @@ function App() {
           </button>
           <button
             className={page === 'dashboard' ? 'active' : ''}
-            onClick={() => navigate('dashboard')}
+            onClick={() => (loggedIn ? navigate('dashboard') : setAuthOpen(true))}
           >
             {dashboard}
           </button>
           <button className={page === 'lab' ? 'active' : ''} onClick={() => navigate('lab')}>
             <FlaskConical size={15} /> Algorithm lab
           </button>
-        </nav>
-        <div className="account">
-          <span className="demo-pill">LOCAL DEMO</span>
-          <div className="avatar">
-            {user.name
-              .split(' ')
-              .map((n) => n[0])
-              .join('')}
-          </div>
-          <label className="account-select">
-            <span className="sr-only">Demo account</span>
-            <select
-              aria-label="Demo account"
-              value={user.id}
-              onChange={(e) => {
-                setUserId(e.target.value);
-                setDetail(null);
-                setEditing(null);
+          {loggedIn && user.role === 'guest' && (
+            <button
+              className={filters.savedOnly ? 'active' : ''}
+              onClick={() => {
+                updateFilters({ savedOnly: !filters.savedOnly });
+                navigate('explore');
               }}
             >
-              {data.users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} · {u.role}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={14} />
-            <small>{user.role} account</small>
-          </label>
+              Saved stays
+            </button>
+          )}
+          {loggedIn && user.role !== 'guest' && (
+            <button
+              className={page === 'reports' ? 'active' : ''}
+              onClick={() => navigate('reports')}
+            >
+              <BarChart3 size={15} /> Reports
+            </button>
+          )}
+        </nav>
+        <div className="account full-account">
+          <span className="demo-pill">LOCAL · SQL</span>
+          {loggedIn ? (
+            <>
+              <button
+                className="icon-button"
+                aria-label="Messages"
+                onClick={() => navigate('messages')}
+              >
+                <MessageCircle size={18} />
+              </button>
+              <button
+                className="icon-button notification-button"
+                aria-label="Notifications"
+                onClick={() => navigate('notifications')}
+              >
+                <Bell size={18} />
+                {data.notifications?.some((n) => !n.read) && <i />}
+              </button>
+              <button className="account-name" onClick={() => navigate('profile')}>
+                <span className="avatar">
+                  {user.name
+                    .split(' ')
+                    .map((n) => n[0])
+                    .join('')}
+                </span>
+                <span>
+                  {user.name}
+                  <small>
+                    {user.role}
+                    {user.role === 'host' && user.hostStatus !== 'approved'
+                      ? ' · ' + user.hostStatus
+                      : ''}
+                  </small>
+                </span>
+              </button>
+              <button
+                className="icon-button"
+                aria-label="Sign out"
+                onClick={async () => {
+                  if (await perform(() => change('/auth/logout'), 'Signed out.')) {
+                    setDetail(null);
+                    setEditing(null);
+                    navigate('explore');
+                  }
+                }}
+              >
+                <LogOut size={16} />
+              </button>
+            </>
+          ) : (
+            <button className="primary" onClick={() => setAuthOpen(true)}>
+              <UserCircle size={16} /> Sign in
+            </button>
+          )}
         </div>
       </header>
       <main>
+        {loading && (
+          <p className="connection-notice" role="status">
+            Loading local listings…
+          </p>
+        )}
+        {connectionError && (
+          <div className="connection-notice" role="alert">
+            Cannot reach the local API. Run npm run dev to start both services.{' '}
+            <button className="text-button" onClick={() => void refresh()}>
+              Retry connection
+            </button>
+          </div>
+        )}
+
         {page === 'explore' && (
           <>
             <section className="hero">
@@ -350,7 +470,7 @@ function App() {
                     value={filters.guests}
                     onChange={(e) => updateFilters({ guests: Number(e.target.value) })}
                   >
-                    {[1, 2, 3, 4, 5, 6].map((n) => (
+                    {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
                       <option key={n} value={n}>
                         {n} guest{n > 1 ? 's' : ''}
                       </option>
@@ -419,6 +539,52 @@ function App() {
                       onChange={(e) => updateFilters({ maxPrice: Number(e.target.value) })}
                     />
                   </label>
+                  <div className="extra-filters">
+                    <label>
+                      Neighborhood
+                      <select
+                        value={filters.neighborhood ?? ''}
+                        onChange={(e) => updateFilters({ neighborhood: e.target.value })}
+                      >
+                        <option value="">All neighborhoods</option>
+                        {['Camarin', 'Deparo', 'Bagumbong', 'Tala', 'Bagong Silang'].map((n) => (
+                          <option key={n}>{n}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Property type
+                      <select
+                        value={filters.propertyType ?? ''}
+                        onChange={(e) => updateFilters({ propertyType: e.target.value })}
+                      >
+                        <option value="">All types</option>
+                        {['Studio', 'Apartment', 'House', 'Private room'].map((n) => (
+                          <option key={n}>{n}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Minimum bedrooms
+                      <input
+                        type="number"
+                        min="0"
+                        max="10"
+                        value={filters.minBedrooms ?? 0}
+                        onChange={(e) => updateFilters({ minBedrooms: Number(e.target.value) })}
+                      />
+                    </label>
+                    {loggedIn && user.role === 'guest' && (
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={!!filters.savedOnly}
+                          onChange={(e) => updateFilters({ savedOnly: e.target.checked })}
+                        />{' '}
+                        Saved stays only
+                      </label>
+                    )}
+                  </div>
                   <fieldset>
                     <legend>Amenities</legend>
                     <div className="amenity-options">
@@ -539,13 +705,7 @@ function App() {
                             property={nearest}
                             onOpen={() => setDetail(nearest.id)}
                             favorite={favorites.includes(nearest.id)}
-                            onFavorite={() =>
-                              setFavorites((f) =>
-                                f.includes(nearest.id)
-                                  ? f.filter((v) => v !== nearest.id)
-                                  : [...f, nearest.id],
-                              )
-                            }
+                            onFavorite={() => toggleFavorite(nearest.id)}
                           />
                           <p className="technical-note">
                             {Math.hypot(
@@ -562,13 +722,7 @@ function App() {
                           property={indexes.properties.get(activeId)!}
                           onOpen={() => setDetail(activeId)}
                           favorite={favorites.includes(activeId)}
-                          onFavorite={() =>
-                            setFavorites((f) =>
-                              f.includes(activeId)
-                                ? f.filter((v) => v !== activeId)
-                                : [...f, activeId],
-                            )
-                          }
+                          onFavorite={() => toggleFavorite(activeId)}
                         />
                       ) : (
                         <>
@@ -586,20 +740,28 @@ function App() {
                 </div>
               ) : (
                 <div className="property-grid">
-                  {properties.map((p, i) => (
+                  {properties.slice(0, visibleCount).map((p, i) => (
                     <PropertyCard
                       key={p.id}
                       property={p}
                       onOpen={() => setDetail(p.id)}
                       favorite={favorites.includes(p.id)}
-                      onFavorite={() =>
-                        setFavorites((f) =>
-                          f.includes(p.id) ? f.filter((v) => v !== p.id) : [...f, p.id],
-                        )
-                      }
+                      onFavorite={() => toggleFavorite(p.id)}
                       featured={i === 0 && !filters.query}
                     />
                   ))}
+                </div>
+              )}
+              {!mapOpen && properties.length > 0 && (
+                <div className="load-more">
+                  <span>
+                    Showing {Math.min(visibleCount, properties.length)} of {properties.length} stays
+                  </span>
+                  {visibleCount < properties.length && (
+                    <button className="outline" onClick={() => setVisibleCount((n) => n + 24)}>
+                      Show more stays
+                    </button>
+                  )}
                 </div>
               )}
               {!properties.length && !mapOpen && (
@@ -636,7 +798,7 @@ function App() {
             </section>
           </>
         )}
-        {page === 'dashboard' && (
+        {page === 'dashboard' && loggedIn && (
           <section className="page-section dashboard">
             <div className="eyebrow">YOUR LITTLE STAY</div>
             <div className="section-heading">
@@ -653,11 +815,15 @@ function App() {
                     ? 'Your reservations, all in one little place.'
                     : user.role === 'host'
                       ? 'Manage your spaces and see who’s checking in.'
-                      : 'Oversee demo accounts, listings, and reservations.'}
+                      : 'Oversee accounts, listings, and reservations.'}
                 </p>
               </div>
               {user.role === 'host' && (
-                <button className="primary" onClick={newProperty}>
+                <button
+                  className="primary"
+                  onClick={newProperty}
+                  disabled={user.hostStatus !== 'approved'}
+                >
                   <Plus size={17} /> Add a listing
                 </button>
               )}
@@ -723,9 +889,15 @@ function App() {
                             <td>{money(p.price)}</td>
                             <td>
                               <span
-                                className={`status ${p.suspended ? 'cancelled' : p.published ? 'confirmed' : 'draft'}`}
+                                className={`status ${p.suspended ? 'cancelled' : p.approval !== 'approved' ? 'draft' : p.published ? 'confirmed' : 'draft'}`}
                               >
-                                {p.suspended ? 'Suspended' : p.published ? 'Published' : 'Draft'}
+                                {p.suspended
+                                  ? 'Suspended'
+                                  : p.approval !== 'approved'
+                                    ? p.approval
+                                    : p.published
+                                      ? 'Published'
+                                      : 'Draft'}
                               </span>
                             </td>
                             <td>
@@ -743,8 +915,7 @@ function App() {
                                       onClick={() =>
                                         perform(
                                           () =>
-                                            saveProperty(data, user, {
-                                              ...p,
+                                            change(`/properties/${p.id}/publish`, {
                                               published: !p.published,
                                             }),
                                           p.published
@@ -757,19 +928,56 @@ function App() {
                                     </button>
                                   </>
                                 ) : (
-                                  <button
-                                    className={`outline small ${p.suspended ? '' : 'danger-text'}`}
-                                    onClick={() =>
-                                      perform(
-                                        () => toggleSuspension(data, user, p.id),
-                                        p.suspended
-                                          ? 'Listing restored.'
-                                          : 'Listing suspended. Existing bookings are preserved.',
-                                      )
-                                    }
-                                  >
-                                    {p.suspended ? 'Restore' : 'Suspend'}
-                                  </button>
+                                  <>
+                                    {p.approval !== 'approved' && (
+                                      <>
+                                        <button
+                                          className="outline small"
+                                          onClick={() =>
+                                            void perform(
+                                              () =>
+                                                change(`/admin/properties/${p.id}`, {
+                                                  action: 'approve',
+                                                }),
+                                              'Listing approved.',
+                                            )
+                                          }
+                                        >
+                                          Approve
+                                        </button>
+                                        <button
+                                          className="text-button"
+                                          onClick={() =>
+                                            void perform(
+                                              () =>
+                                                change(`/admin/properties/${p.id}`, {
+                                                  action: 'reject',
+                                                }),
+                                              'Listing rejected.',
+                                            )
+                                          }
+                                        >
+                                          Reject
+                                        </button>
+                                      </>
+                                    )}
+                                    <button
+                                      className={`outline small ${p.suspended ? '' : 'danger-text'}`}
+                                      onClick={() =>
+                                        perform(
+                                          () =>
+                                            change(`/admin/properties/${p.id}`, {
+                                              action: p.suspended ? 'restore' : 'suspend',
+                                            }),
+                                          p.suspended
+                                            ? 'Listing restored.'
+                                            : 'Listing suspended. Existing bookings are preserved.',
+                                        )
+                                      }
+                                    >
+                                      {p.suspended ? 'Restore' : 'Suspend'}
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -783,44 +991,48 @@ function App() {
             <ReservationList
               data={data}
               user={user}
+              onRefresh={setData}
+              onNotice={setNotice}
               onCancel={(id) =>
                 setConfirmation({
                   title: 'Cancel this reservation?',
-                  body: 'These dates will become available again. No payment or refund is involved in this demo.',
+                  body: 'These dates will become available again. The reservation will be cancelled and its dates released.',
                   action: () =>
                     perform(
-                      () => cancelBooking(data, user, id),
+                      () => change(`/bookings/${id}/cancel`),
                       'Reservation cancelled. The dates are available again.',
                     ),
                 })
               }
             />
-            {user.role === 'admin' && (
-              <>
-                <h2 className="dashboard-heading">Demo accounts</h2>
-                <div className="user-grid">
-                  {data.users.map((u) => (
-                    <div className="user-card" key={u.id}>
-                      <span className="avatar">
-                        {u.name
-                          .split(' ')
-                          .map((n) => n[0])
-                          .join('')}
-                      </span>
-                      <div>
-                        <strong>{u.name}</strong>
-                        <small>{u.id}</small>
-                      </div>
-                      <span className="badge">{u.role}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+            {user.role === 'guest' && <GuestReviews {...fullProps} />}
+            {user.role === 'host' && <HostTools {...fullProps} />}
+            {user.role === 'admin' && <AdminTools {...fullProps} />}
           </section>
         )}
         {page === 'lab' && <AlgorithmLab data={labData} properties={properties} />}
-        {!['explore', 'dashboard', 'lab'].includes(page) && (
+        {loggedIn && page === 'profile' && <AccountPage key={user.id} {...fullProps} />}
+        {loggedIn && page === 'messages' && <MessagesPage key={user.id} {...fullProps} />}
+        {loggedIn && page === 'notifications' && <NotificationsPage {...fullProps} />}
+        {loggedIn && user.role !== 'guest' && page === 'reports' && <ReportsPage {...fullProps} />}
+        {!loggedIn &&
+          ['dashboard', 'profile', 'messages', 'notifications', 'reports'].includes(page) && (
+            <div className="empty-state">
+              <h2>Sign in to continue.</h2>
+              <button className="primary" onClick={() => setAuthOpen(true)}>
+                Sign in
+              </button>
+            </div>
+          )}
+        {![
+          'explore',
+          'dashboard',
+          'lab',
+          'profile',
+          'messages',
+          'notifications',
+          'reports',
+        ].includes(page) && (
           <div className="empty-state">
             <h1>That page wandered off.</h1>
             <button className="primary" onClick={() => navigate('explore')}>
@@ -836,30 +1048,8 @@ function App() {
         <span>Made for little escapes. Built with a little algorithm magic.</span>
         <div>
           <span className="footer-demo">
-            <span /> Fictional listings · Local prototype
+            <span /> Fictional seed listings · Local database
           </span>
-          <button
-            className="text-button"
-            onClick={() =>
-              setConfirmation({
-                title: 'Start fresh?',
-                body: 'This resets all properties and bookings to the original fictional demo. Your local changes will be removed.',
-                action: () => {
-                  if (commit(seedData(), 'Demo reset. A fresh start is ready.')) {
-                    setUserId('guest-1');
-                    setFilters(defaultFilters);
-                    setCategory('All stays');
-                    setPin(null);
-                    setFavorites([]);
-                    setActiveId(undefined);
-                    navigate('explore');
-                  }
-                },
-              })
-            }
-          >
-            <RotateCcw size={13} /> Reset demo
-          </button>
         </div>
       </footer>
       {detailProperty && (
@@ -870,17 +1060,32 @@ function App() {
           user={user}
           filters={filters}
           onClose={() => setDetail(null)}
-          onBook={(input) => {
-            try {
-              const next = createBooking(data, user, input);
-              if (!commit(next, `You're booked! Reference: ${next.reservations[0].reference}`))
-                return false;
+          onSignIn={() => {
+            setDetail(null);
+            setAuthOpen(true);
+          }}
+          onMessage={async () => {
+            if (!loggedIn) {
               setDetail(null);
-              navigate('dashboard');
-              return true;
-            } catch (e) {
-              throw e;
+              setAuthOpen(true);
+              return;
             }
+            try {
+              await request('/threads', 'POST', { propertyId: detailProperty.id });
+              setData(await getState());
+              setDetail(null);
+              navigate('messages');
+            } catch (e) {
+              setNotice((e as Error).message);
+            }
+          }}
+          onBook={async (input) => {
+            const next = await change('/bookings', input);
+            setData(next);
+            setNotice('Your reservation is confirmed.');
+            setDetail(null);
+            navigate('dashboard');
+            return true;
           }}
         />
       )}
@@ -890,13 +1095,16 @@ function App() {
           data={data}
           user={user}
           onClose={() => setEditing(null)}
-          onSave={(property) => {
-            const next = saveProperty(data, user, property);
-            if (commit(next, 'Your listing has been saved.')) setEditing(null);
-            else
-              throw new Error(
-                'Your listing could not be saved. Browser storage may be unavailable or full.',
-              );
+          onSave={async (property) => {
+            const exists = data.properties.some((p) => p.id === property.id);
+            const next = await change(
+              exists ? `/properties/${property.id}` : '/properties',
+              property,
+              exists ? 'PATCH' : 'POST',
+            );
+            setData(next);
+            setNotice('Listing saved and submitted for admin review.');
+            setEditing(null);
           }}
         />
       )}
@@ -909,8 +1117,8 @@ function App() {
             </button>
             <button
               className="primary"
-              onClick={() => {
-                confirmation.action();
+              onClick={async () => {
+                await confirmation.action();
                 setConfirmation(null);
               }}
             >
@@ -918,6 +1126,15 @@ function App() {
             </button>
           </div>
         </Modal>
+      )}
+      {authOpen && (
+        <AuthModal
+          onClose={() => setAuthOpen(false)}
+          onData={(next) => {
+            setData(next);
+            setNotice(`Signed in as ${next.currentUser?.name}.`);
+          }}
+        />
       )}
       {notice && (
         <div className="toast" role="status">
@@ -1011,6 +1228,8 @@ function BookingModal({
   filters,
   onClose,
   onBook,
+  onMessage,
+  onSignIn,
 }: {
   property: Property;
   data: Data;
@@ -1022,36 +1241,55 @@ function BookingModal({
     checkIn: string;
     checkOut: string;
     guests: number;
-  }) => boolean;
+  }) => Promise<boolean>;
+  onMessage: () => Promise<void>;
+  onSignIn: () => void;
 }) {
   const [checkIn, setIn] = useState(filters.checkIn),
     [checkOut, setOut] = useState(filters.checkOut),
     [guests, setGuests] = useState(Math.min(filters.guests, p.capacity)),
-    [error, setError] = useState('');
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false),
+    [photo, setPhoto] = useState(p.image);
   const count = nights(checkIn, checkOut),
     valid = Number.isFinite(count) && count > 0;
   const occupied = data.reservations.filter(
     (r) => r.propertyId === p.id && r.status === 'confirmed' && r.checkOut > today(),
   );
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
     setError('');
+    setBusy(true);
     try {
-      if (!onBook({ propertyId: p.id, checkIn, checkOut, guests }))
-        setError('Your booking could not be saved. Browser storage may be unavailable or full.');
+      await onBook({ propertyId: p.id, checkIn, checkOut, guests });
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
   return (
     <Modal title={p.title} onClose={onClose} wide>
       <div className="detail-layout">
         <div>
-          <img className="detail-photo" src={p.image} alt={`${p.title} apartment interior`} />
+          <img className="detail-photo" src={photo} alt={`${p.title} apartment interior`} />
+          <div className="gallery-thumbnails">
+            {(p.images ?? [p.image]).map((image) => (
+              <button
+                key={image}
+                type="button"
+                onClick={() => setPhoto(image)}
+                aria-label="View property photo"
+              >
+                <img src={image} alt="Property photo thumbnail" />
+              </button>
+            ))}
+          </div>
           <div className="detail-location">
             <MapPin size={15} />
             {p.neighborhood}, North Caloocan
           </div>
+          <p className="detail-address">{p.address}</p>
           <h3>A little room to feel at home.</h3>
           <p>{p.description}</p>
           <div className="detail-facts">
@@ -1073,6 +1311,33 @@ function BookingModal({
               </span>
             ))}
           </div>
+          <h3>House rules</h3>
+          <p>{p.houseRules}</p>
+          {p.checkInInstructions && (
+            <>
+              <h3>Check-in instructions</h3>
+              <p>{p.checkInInstructions}</p>
+            </>
+          )}
+          <h3>Guest reviews</h3>
+          <div className="review-list">
+            {data.reviews
+              ?.filter((r) => r.propertyId === p.id && !r.hidden)
+              .map((r) => (
+                <article key={r.id}>
+                  <strong>{r.rating}/5</strong>
+                  <p>{r.body}</p>
+                </article>
+              ))}
+            {!data.reviews?.some((r) => r.propertyId === p.id && !r.hidden) && (
+              <p>No reviews yet.</p>
+            )}
+          </div>
+          {user.role === 'guest' && (
+            <button className="outline" type="button" onClick={() => void onMessage()}>
+              <MessageCircle size={16} /> Message host
+            </button>
+          )}
           <h3>Find it in the neighborhood</h3>
           <StayMap properties={[p]} compact activeId={p.id} />
         </div>
@@ -1125,7 +1390,7 @@ function BookingModal({
               <strong>{money(p.price * count)}</strong>
             </div>
           )}
-          {valid && !available(p.id, checkIn, checkOut, data.reservations) && (
+          {valid && !available(p.id, checkIn, checkOut, data.reservations, data.calendar) && (
             <p className="field-error">These dates overlap an existing reservation.</p>
           )}
           {error && (
@@ -1135,15 +1400,23 @@ function BookingModal({
           )}
           <button
             className="primary full-width"
-            disabled={user.role !== 'guest' || !p.published || p.suspended}
+            disabled={
+              busy || user.role !== 'guest' || !p.published || p.suspended || user.id === 'visitor'
+            }
           >
-            Reserve this stay <ArrowRight size={16} />
+            {busy ? 'Reserving…' : 'Reserve this stay'} <ArrowRight size={16} />
           </button>
           <small className="booking-note">
             {user.role === 'guest'
-              ? 'Instant confirmation. No payment required.'
-              : 'Switch to a guest demo account to book.'}
+              ? 'Instant confirmation. Payments are not handled here.'
+              : 'Sign in with a guest account to book.'}
           </small>
+          {user.id === 'visitor' && (
+            <button className="outline full-width" type="button" onClick={onSignIn}>
+              Sign in to book
+            </button>
+          )}
+          <AvailabilityCalendar data={data} property={p} />
           {occupied.length > 0 && (
             <div className="occupied">
               <strong>Already reserved</strong>
@@ -1170,20 +1443,25 @@ function PropertyEditor({
   data: Data;
   user: User;
   onClose: () => void;
-  onSave: (p: Property) => void;
+  onSave: (p: Property) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(property),
     [error, setError] = useState('');
   function field<K extends keyof Property>(key: K, value: Property[K]) {
     setDraft((p) => ({ ...p, [key]: value }));
   }
-  function submit(e: FormEvent) {
+  const [saving, setSaving] = useState(false),
+    [uploading, setUploading] = useState(false);
+  async function submit(e: FormEvent) {
     e.preventDefault();
     setError('');
+    setSaving(true);
     try {
-      onSave(draft);
+      await onSave(draft);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setSaving(false);
     }
   }
   return (
@@ -1205,14 +1483,56 @@ function PropertyEditor({
           </label>
           <label>
             Neighborhood
-            <input
-              required
-              maxLength={60}
+            <select
               value={draft.neighborhood}
               onChange={(e) => field('neighborhood', e.target.value)}
-            />
+            >
+              {['Camarin', 'Deparo', 'Bagumbong', 'Tala', 'Bagong Silang'].map((n) => (
+                <option key={n}>{n}</option>
+              ))}
+            </select>
           </label>
         </div>
+        <div className="form-row">
+          <label>
+            Address
+            <input
+              required
+              maxLength={200}
+              value={draft.address ?? ''}
+              onChange={(e) => field('address', e.target.value)}
+            />
+          </label>
+          <label>
+            Property type
+            <select
+              value={draft.propertyType ?? 'Apartment'}
+              onChange={(e) => field('propertyType', e.target.value)}
+            >
+              {['Studio', 'Apartment', 'House', 'Private room'].map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label>
+          House rules
+          <textarea
+            required
+            maxLength={1500}
+            value={draft.houseRules ?? ''}
+            onChange={(e) => field('houseRules', e.target.value)}
+          />
+        </label>
+        <label>
+          Check-in instructions (shared with booked guests)
+          <textarea
+            required
+            maxLength={1500}
+            value={draft.checkInInstructions ?? ''}
+            onChange={(e) => field('checkInInstructions', e.target.value)}
+          />
+        </label>
         <label>
           Description
           <textarea
@@ -1288,7 +1608,10 @@ function PropertyEditor({
                 key={p}
                 type="button"
                 className={draft.image === p ? 'active' : ''}
-                onClick={() => field('image', p)}
+                onClick={() => {
+                  field('image', p);
+                  field('images', [p, ...(draft.images ?? []).filter((v) => v !== p)].slice(0, 8));
+                }}
                 aria-label={`Choose apartment photo ${i + 1}`}
                 aria-pressed={draft.image === p}
               >
@@ -1298,6 +1621,63 @@ function PropertyEditor({
             ))}
           </div>
         </fieldset>
+        <label>
+          Upload photos · JPEG, PNG, WebP · 4 MB each · up to 8
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            disabled={uploading}
+            onChange={async (e) => {
+              const files = Array.from(e.target.files ?? []);
+              if (!files.length) return;
+              if (files.length > 8) {
+                setError('Choose up to eight photos.');
+                return;
+              }
+              setUploading(true);
+              setError('');
+              try {
+                const form = new FormData();
+                files.forEach((f) => form.append('photos', f));
+                const result = await request<{ images: string[] }>('/uploads', 'POST', form);
+                field('images', result.images);
+                field('image', result.images[0]);
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setUploading(false);
+              }
+            }}
+          />
+        </label>
+        <div className="gallery-thumbnails">
+          {(draft.images ?? [draft.image]).map((image) => (
+            <div className="gallery-item" key={image}>
+              <button
+                type="button"
+                onClick={() => field('image', image)}
+                aria-label="Use as cover photo"
+              >
+                <img src={image} alt="Listing photo" />
+                {draft.image === image && <Check size={15} />}
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                aria-label="Remove photo"
+                disabled={(draft.images ?? [draft.image]).length <= 1}
+                onClick={() => {
+                  const next = (draft.images ?? [draft.image]).filter((v) => v !== image);
+                  field('images', next);
+                  if (draft.image === image) field('image', next[0]);
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
         <h3>Place it on the map</h3>
         <p className="muted-copy">
           Click inside the North Caloocan area or enter coordinates below.
@@ -1337,7 +1717,7 @@ function PropertyEditor({
             checked={draft.published}
             onChange={(e) => field('published', e.target.checked)}
           />{' '}
-          Publish listing immediately
+          Publish after admin approval
         </label>
         {draft.suspended && (
           <p className="field-error">
@@ -1353,8 +1733,8 @@ function PropertyEditor({
           <button type="button" className="outline" onClick={onClose}>
             Cancel
           </button>
-          <button className="primary">
-            Save listing <Check size={16} />
+          <button className="primary" disabled={saving || uploading}>
+            {saving ? 'Saving…' : 'Save listing'} <Check size={16} />
           </button>
         </div>
       </form>
@@ -1366,12 +1746,17 @@ function ReservationList({
   data,
   user,
   onCancel,
+  onRefresh,
+  onNotice,
 }: {
   data: Data;
   user: User;
   onCancel: (id: string) => void;
+  onRefresh: (data: Data) => void;
+  onNotice: (text: string) => void;
 }) {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(''),
+    [summary, setSummary] = useState<Reservation | null>(null);
   const indexes = useMemo(() => buildIndexes(data), [data]);
   const all = data.reservations.filter(
     (r) =>
@@ -1384,6 +1769,15 @@ function ReservationList({
   const records = query.trim() ? all.filter((r) => r.id === found?.id) : all;
   return (
     <>
+      {summary && (
+        <Modal title="Booking summary" onClose={() => setSummary(null)}>
+          <BookingSummary
+            reservation={summary}
+            property={data.properties.find((p) => p.id === summary.propertyId)}
+            user={data.users.find((u) => u.id === summary.guestId)}
+          />
+        </Modal>
+      )}
       <div className="section-heading reservation-heading">
         <h2>{user.role === 'guest' ? 'Your reservations' : 'Reservations'}</h2>
         <label className="reference-search">
@@ -1430,6 +1824,46 @@ function ReservationList({
                   </p>
                   <div className="reservation-bottom">
                     <strong>{money(r.total)}</strong>
+                    <button className="text-button" onClick={() => setSummary(r)}>
+                      Booking summary
+                    </button>
+                    {user.role !== 'guest' &&
+                      r.status === 'confirmed' &&
+                      r.checkIn <= today() &&
+                      r.checkOut > today() && (
+                        <button
+                          className="outline small"
+                          onClick={async () => {
+                            try {
+                              onRefresh(
+                                await change(`/bookings/${r.id}/status`, { status: 'checked-in' }),
+                              );
+                              onNotice('Guest checked in.');
+                            } catch (e) {
+                              onNotice((e as Error).message);
+                            }
+                          }}
+                        >
+                          Check in
+                        </button>
+                      )}
+                    {user.role !== 'guest' && r.status === 'checked-in' && (
+                      <button
+                        className="outline small"
+                        onClick={async () => {
+                          try {
+                            onRefresh(
+                              await change(`/bookings/${r.id}/status`, { status: 'completed' }),
+                            );
+                            onNotice('Checkout recorded.');
+                          } catch (e) {
+                            onNotice((e as Error).message);
+                          }
+                        }}
+                      >
+                        Check out
+                      </button>
+                    )}
                     <small>Booked at {money(r.nightlyRate)}/night</small>
                     {r.status === 'confirmed' &&
                       (user.role === 'admin' ||

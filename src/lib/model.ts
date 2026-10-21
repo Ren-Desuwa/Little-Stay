@@ -1,7 +1,61 @@
 import { region } from './region';
 import { HashTable, indexById, matchText, geoBounds } from './algorithms';
 export type Role = 'guest' | 'host' | 'admin';
-export type User = { id: string; name: string; role: Role };
+export type User = {
+  id: string;
+  name: string;
+  role: Role;
+  email?: string;
+  bio?: string;
+  hostStatus?: 'pending' | 'approved' | 'rejected';
+  suspended?: boolean;
+};
+export type CalendarEntry = {
+  id: string;
+  propertyId: string;
+  start: string;
+  end: string;
+  kind: 'booking' | 'blocked';
+  reason?: string;
+};
+export type Review = {
+  id: string;
+  bookingId: string;
+  propertyId: string;
+  guestId: string;
+  rating: number;
+  body: string;
+  hidden: boolean;
+  createdAt: string;
+};
+export type Thread = {
+  id: string;
+  propertyId: string;
+  guestId: string;
+  hostId: string;
+  updatedAt: string;
+};
+export type Message = {
+  id: string;
+  threadId: string;
+  senderId: string;
+  body: string;
+  createdAt: string;
+};
+export type Notification = {
+  id: string;
+  userId: string;
+  body: string;
+  read: boolean;
+  createdAt: string;
+};
+export type AuditEntry = {
+  id: string;
+  actorId: string;
+  action: string;
+  targetId: string;
+  createdAt: string;
+};
 export const amenities = [
   'WiFi',
   'Air conditioning',
@@ -27,6 +81,12 @@ export type Property = {
   image: string;
   published: boolean;
   suspended: boolean;
+  address?: string;
+  propertyType?: string;
+  images?: string[];
+  houseRules?: string;
+  checkInInstructions?: string;
+  approval?: 'pending' | 'approved' | 'rejected';
 };
 export type Reservation = {
   id: string;
@@ -38,7 +98,7 @@ export type Reservation = {
   guests: number;
   nightlyRate: number;
   total: number;
-  status: 'confirmed' | 'cancelled';
+  status: 'confirmed' | 'cancelled' | 'checked-in' | 'completed';
   createdAt: string;
 };
 export type Data = {
@@ -46,6 +106,14 @@ export type Data = {
   users: User[];
   properties: Property[];
   reservations: Reservation[];
+  currentUser?: User | null;
+  calendar?: CalendarEntry[];
+  favorites?: string[];
+  reviews?: Review[];
+  threads?: Thread[];
+  messages?: Message[];
+  notifications?: Notification[];
+  audit?: AuditEntry[];
 };
 export const money = (n: number) =>
   new Intl.NumberFormat('en-PH', {
@@ -54,8 +122,14 @@ export const money = (n: number) =>
     maximumFractionDigits: 0,
   }).format(n);
 export function today() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (key: string) => parts.find((p) => p.type === key)!.value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
 }
 export function addDays(value: string, days: number) {
   const d = new Date(value + 'T12:00:00Z');
@@ -83,13 +157,16 @@ export function available(
   start: string,
   end: string,
   reservations: Reservation[],
+  calendar: CalendarEntry[] = [],
 ) {
-  return !reservations.some(
-    (r) =>
-      r.propertyId === propertyId &&
-      r.status === 'confirmed' &&
-      start < r.checkOut &&
-      end > r.checkIn,
+  return (
+    !reservations.some(
+      (r) =>
+        r.propertyId === propertyId &&
+        ['confirmed', 'checked-in', 'completed'].includes(r.status) &&
+        start < r.checkOut &&
+        end > r.checkIn,
+    ) && !calendar.some((c) => c.propertyId === propertyId && start < c.end && end > c.start)
   );
 }
 export function buildIndexes(data: Data) {
@@ -206,6 +283,10 @@ export type Filters = {
   checkIn: string;
   checkOut: string;
   sort: string;
+  neighborhood?: string;
+  propertyType?: string;
+  minBedrooms?: number;
+  savedOnly?: boolean;
 };
 export function findProperties(data: Data, f: Filters) {
   return data.properties
@@ -213,10 +294,17 @@ export function findProperties(data: Data, f: Filters) {
       (p) =>
         p.published &&
         !p.suspended &&
+        (p.approval === undefined || p.approval === 'approved') &&
+        (!f.neighborhood || p.neighborhood === f.neighborhood) &&
+        (!f.propertyType || p.propertyType === f.propertyType) &&
+        p.bedrooms >= (f.minBedrooms ?? 0) &&
+        (!f.savedOnly || (data.favorites ?? []).includes(p.id)) &&
         (f.maxPrice === 10000 || p.price <= f.maxPrice) &&
         p.capacity >= f.guests &&
         f.amenities.every((a) => p.amenities.includes(a)) &&
-        (!f.checkIn || !f.checkOut || available(p.id, f.checkIn, f.checkOut, data.reservations)),
+        (!f.checkIn ||
+          !f.checkOut ||
+          available(p.id, f.checkIn, f.checkOut, data.reservations, data.calendar)),
     )
     .map((property) => ({ property, ...matchText(f.query, searchableText(property)) }))
     .filter((p) => p.accepted)

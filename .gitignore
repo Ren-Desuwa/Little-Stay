@@ -2,3 +2,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 .local/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+little-stay-backup-*.json
