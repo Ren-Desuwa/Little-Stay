@@ -1,1 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect width="48" height="48" rx="14" fill="#234d36"/><path d="M12 25 24 13l12 12v12H12Z" fill="none" stroke="#f5e9c7" stroke-width="3"/><path d="M21 37V26h7v11" stroke="#f5e9c7" fill="none" stroke-width="3"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Little Stay</title>
+  <rect width="64" height="64" rx="16" fill="#234d36" />
+  <path d="M14 30 32 14l18 16v20H14Z" fill="#f5e9c7" />
+  <path d="M27 50V35h10v15" fill="#234d36" />
+</svg>
