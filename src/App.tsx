@@ -1,7 +1,17 @@
 import { region } from './lib/region';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react';
 import {
   ArrowDownUp,
+  ArrowUp,
   ArrowRight,
   Bath,
   BedDouble,
@@ -33,7 +43,7 @@ import {
 } from 'lucide-react';
 import StayMap from './components/StayMap';
 import Modal from './components/Modal';
-import AlgorithmLab from './components/AlgorithmLab';
+import AdminDashboardTabs, { type AdminDashboardSection } from './components/AdminDashboardTabs';
 import { locateCell, project, voronoi } from './lib/algorithms';
 import {
   amenities,
@@ -48,10 +58,9 @@ import {
   type Filters,
   type Property,
   type User,
-  type Reservation,
 } from './lib/model';
 import { photos } from './lib/seed';
-import { emptyData, getState, change, request } from './lib/api';
+import { emptyData, getState, getStateOrder, change, request } from './lib/api';
 import {
   AuthModal,
   AccountPage,
@@ -64,6 +73,8 @@ import {
   AvailabilityCalendar,
   BookingSummary,
 } from './components/FullFeatures';
+
+const AlgorithmLab = lazy(() => import('./components/AlgorithmLab'));
 
 const defaultFilters: Filters = {
   query: '',
@@ -81,11 +92,60 @@ const formatDate = (value: string) =>
     year: 'numeric',
   });
 function App() {
-  const [data, setData] = useState<Data>(emptyData);
+  const [data, updateData] = useState<Data>(emptyData);
+  const appliedStateOrder = useRef(0);
+  const setData = useCallback((next: Data) => {
+    const order = getStateOrder(next);
+    // A delayed poll must not restore data from an earlier account or overwrite a newer mutation.
+    if (order < appliedStateOrder.current) return;
+    appliedStateOrder.current = order;
+    updateData((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
+  }, []);
   const [authOpen, setAuthOpen] = useState(false),
     [loading, setLoading] = useState(true),
     [connectionError, setConnectionError] = useState('');
   const [page, setPage] = useState(() => window.location.hash.slice(1) || 'explore');
+  const [adminTab, setAdminTab] = useState<AdminDashboardSection>('listings');
+  const [navHidden, setNavHidden] = useState(false);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const measure = () =>
+      document.documentElement.style.setProperty(
+        '--site-header-height',
+        `${header.offsetHeight}px`,
+      );
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty('--site-header-height');
+    };
+  }, []);
+  useEffect(() => {
+    let lastPosition = window.scrollY;
+    let directionAnchor = lastPosition;
+    let direction = 0;
+    const onScroll = () => {
+      const position = Math.max(0, window.scrollY);
+      setShowBackToTop(position > 400);
+      const nextDirection = Math.sign(position - lastPosition);
+      if (nextDirection && nextDirection !== direction) {
+        direction = nextDirection;
+        directionAnchor = lastPosition;
+      }
+      if (position < (headerRef.current?.offsetHeight ?? 100)) setNavHidden(false);
+      else if (Math.abs(position - directionAnchor) > 12) setNavHidden(direction > 0);
+      lastPosition = position;
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   const [filters, setFilters] = useState<Filters>(defaultFilters),
     [filtersOpen, setFiltersOpen] = useState(false),
     [mapOpen, setMapOpen] = useState(false),
@@ -100,11 +160,18 @@ function App() {
     body: string;
     action: () => void | Promise<unknown>;
   } | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const favorites = data.favorites ?? [];
   const [category, setCategory] = useState('All stays');
   const indexes = useMemo(() => buildIndexes(data), [data]);
   const user: User = data.currentUser ?? { id: 'visitor', name: 'Visitor', role: 'guest' };
   const loggedIn = !!data.currentUser;
+  useEffect(() => {
+    setAdminTab('listings');
+    setDetail(null);
+    setEditing(null);
+    setConfirmation(null);
+  }, [user.id]);
   const fullProps = { data, user, onData: setData, onNotice: setNotice };
   async function refresh() {
     try {
@@ -121,25 +188,41 @@ function App() {
   }, []);
   useEffect(() => {
     let active = true;
+    let polling = false;
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible')
+      if (document.visibilityState === 'visible' && !polling) {
+        polling = true;
         getState()
           .then((next) => {
             if (active) {
-              setData((current) =>
-                JSON.stringify(current) === JSON.stringify(next) ? current : next,
-              );
+              setData(next);
               setConnectionError('');
               setLoading(false);
             }
           })
-          .catch(() => {});
+          .catch((e: Error) => {
+            if (active) setConnectionError(e.message);
+          })
+          .finally(() => {
+            polling = false;
+          });
+      }
     }, 10000);
     return () => {
       active = false;
       clearInterval(timer);
     };
   }, [user.id]);
+  useEffect(() => {
+    if (loading) return;
+    if (
+      (page === 'lab' && user.role !== 'admin') ||
+      (page === 'reports' && loggedIn && user.role === 'guest') ||
+      (page === 'explore' && user.role === 'host')
+    ) {
+      navigate(loggedIn ? 'dashboard' : 'explore');
+    }
+  }, [loading, page, user.role, loggedIn]);
   const results = useMemo(() => findProperties(data, filters), [data, filters]);
   const properties = useMemo(() => results.map((r) => r.property), [results]);
   const [visibleCount, setVisibleCount] = useState(24);
@@ -237,7 +320,7 @@ function App() {
   }
   return (
     <>
-      <header className="site-header">
+      <header ref={headerRef} className={`site-header ${navHidden ? 'nav-hidden' : ''}`}>
         <a
           className="brand"
           href="#explore"
@@ -251,21 +334,25 @@ function App() {
           little stay<span className="brand-dot">.</span>
         </a>
         <nav aria-label="Main navigation">
-          <button
-            className={page === 'explore' ? 'active' : ''}
-            onClick={() => navigate('explore')}
-          >
-            Find a stay
-          </button>
+          {user.role !== 'host' && (
+            <button
+              className={page === 'explore' ? 'active' : ''}
+              onClick={() => navigate('explore')}
+            >
+              Find a stay
+            </button>
+          )}
           <button
             className={page === 'dashboard' ? 'active' : ''}
             onClick={() => (loggedIn ? navigate('dashboard') : setAuthOpen(true))}
           >
             {dashboard}
           </button>
-          <button className={page === 'lab' ? 'active' : ''} onClick={() => navigate('lab')}>
-            <FlaskConical size={15} /> Algorithm lab
-          </button>
+          {loggedIn && user.role === 'admin' && (
+            <button className={page === 'lab' ? 'active' : ''} onClick={() => navigate('lab')}>
+              <FlaskConical size={15} /> Algorithm lab
+            </button>
+          )}
           {loggedIn && user.role === 'guest' && (
             <button
               className={filters.savedOnly ? 'active' : ''}
@@ -351,14 +438,14 @@ function App() {
         )}
         {connectionError && (
           <div className="connection-notice" role="alert">
-            Cannot reach the local API. Run npm run dev to start both services.{' '}
+            Local API connection failed: {connectionError} Run npm run dev to start both services.{' '}
             <button className="text-button" onClick={() => void refresh()}>
               Retry connection
             </button>
           </div>
         )}
 
-        {page === 'explore' && (
+        {page === 'explore' && user.role !== 'host' && (
           <>
             <section className="hero">
               <div className="hero-copy">
@@ -429,7 +516,7 @@ function App() {
                   <b>Where to?</b>
                   <input
                     aria-label="Search properties and amenities"
-                    placeholder="North Caloocan, a neighborhood, or an amenity"
+                    placeholder=" North Caloocan, a neighborhood, or an amenity"
                     value={filters.query}
                     onChange={(e) => updateFilters({ query: e.target.value })}
                   />
@@ -687,7 +774,10 @@ function App() {
                     <StayMap
                       properties={properties}
                       activeId={activeId}
-                      onSelect={setActiveId}
+                      onSelect={(id) => {
+                        setPin(null);
+                        setActiveId(id);
+                      }}
                       overlay={overlay}
                       pin={pin}
                       onPin={(p) => {
@@ -857,164 +947,210 @@ function App() {
                 </div>
               )}
             </div>
-            {user.role !== 'guest' && (
+            {user.role === 'admin' && (
               <>
-                <h2 className="dashboard-heading">
-                  {user.role === 'host' ? 'Your listings' : 'All listings'}
-                </h2>
-                <div className="table-scroll">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Property</th>
-                        <th>Nightly price</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.properties
-                        .filter((p) => user.role === 'admin' || p.hostId === user.id)
-                        .map((p) => (
-                          <tr key={p.id}>
-                            <td>
-                              <div className="table-property">
-                                <img src={p.image} alt="" />
-                                <span>
-                                  <strong>{p.title}</strong>
-                                  <small>{p.neighborhood}</small>
-                                </span>
-                              </div>
-                            </td>
-                            <td>{money(p.price)}</td>
-                            <td>
-                              <span
-                                className={`status ${p.suspended ? 'cancelled' : p.approval !== 'approved' ? 'draft' : p.published ? 'confirmed' : 'draft'}`}
-                              >
-                                {p.suspended
-                                  ? 'Suspended'
-                                  : p.approval !== 'approved'
-                                    ? p.approval
-                                    : p.published
-                                      ? 'Published'
-                                      : 'Draft'}
-                              </span>
-                            </td>
-                            <td>
-                              <div className="table-actions">
-                                {user.role === 'host' ? (
-                                  <>
-                                    <button
-                                      className="outline small"
-                                      onClick={() => setEditing({ ...p })}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      className="text-button"
-                                      onClick={() =>
-                                        perform(
-                                          () =>
-                                            change(`/properties/${p.id}/publish`, {
-                                              published: !p.published,
-                                            }),
-                                          p.published
-                                            ? 'Listing unpublished.'
-                                            : 'Listing published.',
-                                        )
-                                      }
-                                    >
-                                      {p.published ? 'Unpublish' : 'Publish'}
-                                    </button>
-                                  </>
-                                ) : (
-                                  <>
-                                    {p.approval !== 'approved' && (
-                                      <>
-                                        <button
-                                          className="outline small"
-                                          onClick={() =>
-                                            void perform(
-                                              () =>
-                                                change(`/admin/properties/${p.id}`, {
-                                                  action: 'approve',
-                                                }),
-                                              'Listing approved.',
-                                            )
-                                          }
-                                        >
-                                          Approve
-                                        </button>
-                                        <button
-                                          className="text-button"
-                                          onClick={() =>
-                                            void perform(
-                                              () =>
-                                                change(`/admin/properties/${p.id}`, {
-                                                  action: 'reject',
-                                                }),
-                                              'Listing rejected.',
-                                            )
-                                          }
-                                        >
-                                          Reject
-                                        </button>
-                                      </>
-                                    )}
-                                    <button
-                                      className={`outline small ${p.suspended ? '' : 'danger-text'}`}
-                                      onClick={() =>
-                                        perform(
-                                          () =>
-                                            change(`/admin/properties/${p.id}`, {
-                                              action: p.suspended ? 'restore' : 'suspend',
-                                            }),
-                                          p.suspended
-                                            ? 'Listing restored.'
-                                            : 'Listing suspended. Existing bookings are preserved.',
-                                        )
-                                      }
-                                    >
-                                      {p.suspended ? 'Restore' : 'Suspend'}
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
+                <div id="admin-dashboard-start" />
+                <AdminDashboardTabs
+                  value={adminTab}
+                  onChange={(next) => {
+                    setAdminTab(next);
+                    setNavHidden(false);
+                    requestAnimationFrame(() =>
+                      document
+                        .getElementById('admin-dashboard-start')
+                        ?.scrollIntoView({ block: 'start', behavior: 'instant' }),
+                    );
+                  }}
+                />
               </>
             )}
-            <ReservationList
-              data={data}
-              user={user}
-              onRefresh={setData}
-              onNotice={setNotice}
-              onCancel={(id) =>
-                setConfirmation({
-                  title: 'Cancel this reservation?',
-                  body: 'These dates will become available again. The reservation will be cancelled and its dates released.',
-                  action: () =>
-                    perform(
-                      () => change(`/bookings/${id}/cancel`),
-                      'Reservation cancelled. The dates are available again.',
-                    ),
-                })
-              }
-            />
-            {user.role === 'guest' && <GuestReviews {...fullProps} />}
-            {user.role === 'host' && <HostTools {...fullProps} />}
-            {user.role === 'admin' && <AdminTools {...fullProps} />}
+            <div
+              className={user.role === 'admin' ? 'admin-dashboard-panel' : undefined}
+              id={user.role === 'admin' ? `admin-panel-${adminTab}` : undefined}
+              role={user.role === 'admin' ? 'tabpanel' : undefined}
+              aria-labelledby={user.role === 'admin' ? `admin-tab-${adminTab}` : undefined}
+              tabIndex={user.role === 'admin' ? 0 : undefined}
+            >
+              {user.role !== 'guest' && (user.role !== 'admin' || adminTab === 'listings') && (
+                <>
+                  <h2 className="dashboard-heading">
+                    {user.role === 'host' ? 'Your listings' : 'All listings'}
+                  </h2>
+                  <div className="table-scroll">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Property</th>
+                          <th>Nightly price</th>
+                          <th>Status</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.properties
+                          .filter((p) => user.role === 'admin' || p.hostId === user.id)
+                          .map((p) => (
+                            <tr key={p.id}>
+                              <td>
+                                <div className="table-property">
+                                  <img src={p.image} alt="" />
+                                  <span>
+                                    <strong>{p.title}</strong>
+                                    <small>{p.neighborhood}</small>
+                                  </span>
+                                </div>
+                              </td>
+                              <td>{money(p.price)}</td>
+                              <td>
+                                <span
+                                  className={`status ${p.suspended ? 'cancelled' : p.approval !== 'approved' ? 'draft' : p.published ? 'confirmed' : 'draft'}`}
+                                >
+                                  {p.suspended
+                                    ? 'Suspended'
+                                    : p.approval !== 'approved'
+                                      ? p.approval
+                                      : p.published
+                                        ? 'Published'
+                                        : 'Draft'}
+                                </span>
+                              </td>
+                              <td>
+                                <div className="table-actions">
+                                  {user.role === 'host' ? (
+                                    <>
+                                      <button
+                                        className="outline small"
+                                        onClick={() => setEditing({ ...p })}
+                                      >
+                                        Edit listing
+                                      </button>
+                                      <button
+                                        className="text-button"
+                                        onClick={() =>
+                                          perform(
+                                            () =>
+                                              change(`/properties/${p.id}/publish`, {
+                                                published: !p.published,
+                                              }),
+                                            p.published
+                                              ? 'Listing unpublished.'
+                                              : 'Listing published.',
+                                          )
+                                        }
+                                      >
+                                        {p.published ? 'Unpublish' : 'Publish'}
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      {p.approval !== 'approved' && (
+                                        <>
+                                          <button
+                                            className="outline small"
+                                            onClick={() =>
+                                              void perform(
+                                                () =>
+                                                  change(`/admin/properties/${p.id}`, {
+                                                    action: 'approve',
+                                                  }),
+                                                'Listing approved.',
+                                              )
+                                            }
+                                          >
+                                            Approve
+                                          </button>
+                                          <button
+                                            className="text-button"
+                                            onClick={() =>
+                                              void perform(
+                                                () =>
+                                                  change(`/admin/properties/${p.id}`, {
+                                                    action: 'reject',
+                                                  }),
+                                                'Listing rejected.',
+                                              )
+                                            }
+                                          >
+                                            Reject
+                                          </button>
+                                        </>
+                                      )}
+                                      <button
+                                        className={`outline small ${p.suspended ? '' : 'danger-text'}`}
+                                        onClick={() =>
+                                          perform(
+                                            () =>
+                                              change(`/admin/properties/${p.id}`, {
+                                                action: p.suspended ? 'restore' : 'suspend',
+                                              }),
+                                            p.suspended
+                                              ? 'Listing restored.'
+                                              : 'Listing suspended. Existing bookings are preserved.',
+                                          )
+                                        }
+                                      >
+                                        {p.suspended ? 'Restore' : 'Suspend'}
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+              {(user.role !== 'admin' || adminTab === 'reservations') && (
+                <ReservationList
+                  key={`reservations-${user.id}`}
+                  data={data}
+                  user={user}
+                  onRefresh={setData}
+                  onNotice={setNotice}
+                  onCancel={(id) =>
+                    setConfirmation({
+                      title: 'Cancel this reservation?',
+                      body: 'These dates will become available again. The reservation will be cancelled and its dates released.',
+                      action: () =>
+                        perform(
+                          () => change(`/bookings/${id}/cancel`),
+                          'Reservation cancelled. The dates are available again.',
+                        ),
+                    })
+                  }
+                />
+              )}
+              {user.role === 'guest' && <GuestReviews key={`reviews-${user.id}`} {...fullProps} />}
+              {user.role === 'host' && <HostTools key={`host-tools-${user.id}`} {...fullProps} />}
+              {user.role === 'admin' && adminTab !== 'listings' && adminTab !== 'reservations' && (
+                <AdminTools
+                  key={`admin-tools-${user.id}-${adminTab}`}
+                  section={adminTab}
+                  {...fullProps}
+                />
+              )}
+            </div>
           </section>
         )}
-        {page === 'lab' && <AlgorithmLab data={labData} properties={properties} />}
-        {loggedIn && page === 'profile' && <AccountPage key={user.id} {...fullProps} />}
-        {loggedIn && page === 'messages' && <MessagesPage key={user.id} {...fullProps} />}
-        {loggedIn && page === 'notifications' && <NotificationsPage {...fullProps} />}
-        {loggedIn && user.role !== 'guest' && page === 'reports' && <ReportsPage {...fullProps} />}
+        {loggedIn && user.role === 'admin' && page === 'lab' && (
+          <Suspense fallback={<p role="status">Loading algorithm lab…</p>}>
+            <AlgorithmLab key={`algorithm-lab-${user.id}`} data={labData} properties={properties} />
+          </Suspense>
+        )}
+        {loggedIn && page === 'profile' && (
+          <AccountPage key={`profile-${user.id}`} {...fullProps} />
+        )}
+        {loggedIn && page === 'messages' && (
+          <MessagesPage key={`messages-${user.id}`} {...fullProps} />
+        )}
+        {loggedIn && page === 'notifications' && (
+          <NotificationsPage key={`notifications-${user.id}`} {...fullProps} />
+        )}
+        {loggedIn && user.role !== 'guest' && page === 'reports' && (
+          <ReportsPage key={`reports-${user.id}`} {...fullProps} />
+        )}
         {!loggedIn &&
           ['dashboard', 'profile', 'messages', 'notifications', 'reports'].includes(page) && (
             <div className="empty-state">
@@ -1112,14 +1248,21 @@ function App() {
         <Modal title={confirmation.title} onClose={() => setConfirmation(null)}>
           <p>{confirmation.body}</p>
           <div className="modal-actions">
-            <button className="outline" onClick={() => setConfirmation(null)}>
+            <button className="outline" disabled={confirming} onClick={() => setConfirmation(null)}>
               Keep it as is
             </button>
             <button
               className="primary"
+              disabled={confirming}
               onClick={async () => {
-                await confirmation.action();
-                setConfirmation(null);
+                if (confirming) return;
+                setConfirming(true);
+                try {
+                  await confirmation.action();
+                  setConfirmation(null);
+                } finally {
+                  setConfirming(false);
+                }
               }}
             >
               Confirm
@@ -1135,6 +1278,25 @@ function App() {
             setNotice(`Signed in as ${next.currentUser?.name}.`);
           }}
         />
+      )}
+      {showBackToTop && (
+        <button
+          className="back-to-top"
+          type="button"
+          aria-label="Back to top"
+          title="Back to top"
+          onClick={() => {
+            setNavHidden(false);
+            window.scrollTo({
+              top: 0,
+              behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+                ? 'instant'
+                : 'smooth',
+            });
+          }}
+        >
+          <ArrowUp size={21} aria-hidden="true" />
+        </button>
       )}
       {notice && (
         <div className="toast" role="status">
@@ -1161,11 +1323,63 @@ function PropertyCard({
   onFavorite: () => void;
   featured?: boolean;
 }) {
+  const images = [...new Set([p.image, ...(p.images ?? [])])];
+  const galleryKey = JSON.stringify(images);
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const [hovered, setHovered] = useState(false);
+  const [manualSelection, setManualSelection] = useState(0);
+  const firstDelay = useRef(1000);
+  const activePhoto = photoIndex % images.length;
+  useEffect(() => setPhotoIndex(0), [galleryKey]);
+  useEffect(() => {
+    if (!hovered || images.length < 2) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const advance = () => {
+      setPhotoIndex((index) => (index + 1) % images.length);
+      timer = setTimeout(advance, 5000);
+    };
+    const schedule = (delay: number) => {
+      clearTimeout(timer);
+      if (document.visibilityState === 'visible') timer = setTimeout(advance, delay);
+    };
+    const onVisibilityChange = () => schedule(5000);
+    schedule(firstDelay.current);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [hovered, galleryKey, manualSelection]);
+  function selectPhoto(index: number) {
+    setPhotoIndex(index);
+    firstDelay.current = 5000;
+    setManualSelection((value) => value + 1);
+  }
   return (
-    <article className="property-card">
+    <article
+      className="property-card"
+      onMouseEnter={() => {
+        firstDelay.current = 1000;
+        setHovered(true);
+      }}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div className="card-image">
         <button className="image-open" onClick={onOpen} aria-label={`View ${p.title}`}>
-          <img src={p.image} alt={`${p.title}, a furnished demo apartment`} loading="lazy" />
+          <span
+            className="card-slide-track"
+            style={{ transform: `translateX(-${activePhoto * 100}%)` }}
+          >
+            {images.map((image, index) => (
+              <span className="card-slide" key={image} aria-hidden={index !== activePhoto}>
+                <img
+                  src={image}
+                  alt={`${p.title}, photo ${index + 1} of ${images.length}`}
+                  loading="lazy"
+                />
+              </span>
+            ))}
+          </span>
         </button>
         {featured && (
           <span className="card-badge">
@@ -1180,11 +1394,22 @@ function PropertyCard({
         >
           <Heart size={17} fill={favorite ? 'currentColor' : 'none'} />
         </button>
-        <span className="image-dots">
-          <i />
-          <i />
-          <i />
-        </span>
+        {images.length > 1 && (
+          <div className="image-dots" role="group" aria-label={`${p.title} photos`}>
+            {images.map((image, index) => (
+              <button
+                key={image}
+                type="button"
+                className={index === activePhoto ? 'active' : ''}
+                aria-label={`Show photo ${index + 1} of ${p.title}`}
+                aria-pressed={index === activePhoto}
+                onClick={() => selectPhoto(index)}
+              >
+                <span />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div className="card-body">
         <div className="card-neighborhood">
@@ -1196,9 +1421,10 @@ function PropertyCard({
           {p.title}
         </button>
         <p className="card-meta">
-          {p.bedrooms === 0 ? 'Studio' : `${p.bedrooms} bedroom`}
+          {p.bedrooms === 0 ? 'Studio' : `${p.bedrooms} bedroom${p.bedrooms === 1 ? '' : 's'}`}
           <span>·</span>
-          {p.capacity} guests<span>·</span>
+          {p.capacity} guest{p.capacity === 1 ? '' : 's'}
+          <span>·</span>
           {p.amenities.includes('Balcony')
             ? 'Private balcony'
             : p.amenities.includes('Pool')
@@ -1258,6 +1484,7 @@ function BookingModal({
   );
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setError('');
     setBusy(true);
     try {
@@ -1295,11 +1522,11 @@ function BookingModal({
           <div className="detail-facts">
             <span>
               <Users size={17} />
-              {p.capacity} guests
+              {p.capacity} guest{p.capacity === 1 ? '' : 's'}
             </span>
             <span>
               <BedDouble size={17} />
-              {p.bedrooms === 0 ? 'Studio' : `${p.bedrooms} bedroom`}
+              {p.bedrooms === 0 ? 'Studio' : `${p.bedrooms} bedroom${p.bedrooms === 1 ? '' : 's'}`}
             </span>
           </div>
           <h3>The little comforts</h3>
@@ -1341,94 +1568,112 @@ function BookingModal({
           <h3>Find it in the neighborhood</h3>
           <StayMap properties={[p]} compact activeId={p.id} />
         </div>
-        <form className="booking-box" onSubmit={submit}>
-          <h3>
-            {money(p.price)} <small>/ night</small>
-          </h3>
-          <p>No hidden fees. Just your little stay.</p>
-          <label>
-            Check-in
-            <input
-              type="date"
-              aria-label="Booking check-in"
-              required
-              min={today()}
-              value={checkIn}
-              onChange={(e) => setIn(e.target.value)}
-            />
-          </label>
-          <label>
-            Checkout
-            <input
-              type="date"
-              aria-label="Booking checkout"
-              required
-              min={checkIn || today()}
-              value={checkOut}
-              onChange={(e) => setOut(e.target.value)}
-            />
-          </label>
-          <label>
-            Guests
-            <select
-              aria-label="Booking guests"
-              value={guests}
-              onChange={(e) => setGuests(Number(e.target.value))}
-            >
-              {Array.from({ length: p.capacity }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>
-                  {n} guest{n > 1 ? 's' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          {valid && (
-            <div className="price-breakdown">
-              <span>
-                {money(p.price)} × {count} night{count > 1 ? 's' : ''}
-              </span>
-              <strong>{money(p.price * count)}</strong>
-            </div>
-          )}
-          {valid && !available(p.id, checkIn, checkOut, data.reservations, data.calendar) && (
-            <p className="field-error">These dates overlap an existing reservation.</p>
-          )}
-          {error && (
-            <p role="alert" className="field-error">
-              {error}
-            </p>
-          )}
-          <button
-            className="primary full-width"
-            disabled={
-              busy || user.role !== 'guest' || !p.published || p.suspended || user.id === 'visitor'
-            }
-          >
-            {busy ? 'Reserving…' : 'Reserve this stay'} <ArrowRight size={16} />
-          </button>
-          <small className="booking-note">
-            {user.role === 'guest'
-              ? 'Instant confirmation. Payments are not handled here.'
-              : 'Sign in with a guest account to book.'}
-          </small>
-          {user.id === 'visitor' && (
-            <button className="outline full-width" type="button" onClick={onSignIn}>
-              Sign in to book
-            </button>
-          )}
-          <AvailabilityCalendar data={data} property={p} />
-          {occupied.length > 0 && (
-            <div className="occupied">
-              <strong>Already reserved</strong>
-              {occupied.map((r) => (
-                <span key={r.id}>
-                  {formatDate(r.checkIn)} → {formatDate(r.checkOut)}
+        {user.role === 'guest' ? (
+          <form className="booking-box" onSubmit={submit}>
+            <h3>
+              {money(p.price)} <small>/ night</small>
+            </h3>
+            <p>No hidden fees. Just your little stay.</p>
+            <label>
+              Check-in
+              <input
+                type="date"
+                aria-label="Booking check-in"
+                required
+                min={today()}
+                value={checkIn}
+                onChange={(e) => setIn(e.target.value)}
+              />
+            </label>
+            <label>
+              Checkout
+              <input
+                type="date"
+                aria-label="Booking checkout"
+                required
+                min={checkIn || today()}
+                value={checkOut}
+                onChange={(e) => setOut(e.target.value)}
+              />
+            </label>
+            <label>
+              Guests
+              <select
+                aria-label="Booking guests"
+                value={guests}
+                onChange={(e) => setGuests(Number(e.target.value))}
+              >
+                {Array.from({ length: p.capacity }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>
+                    {n} guest{n > 1 ? 's' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {valid && (
+              <div className="price-breakdown">
+                <span>
+                  {money(p.price)} × {count} night{count > 1 ? 's' : ''}
                 </span>
-              ))}
-              <small>Checkout dates are available for new check-ins.</small>
-            </div>
-          )}
-        </form>
+                <strong>{money(p.price * count)}</strong>
+              </div>
+            )}
+            {valid && !available(p.id, checkIn, checkOut, data.reservations, data.calendar) && (
+              <p className="field-error">These dates overlap an existing reservation.</p>
+            )}
+            {error && (
+              <p role="alert" className="field-error">
+                {error}
+              </p>
+            )}
+            <button
+              className="primary full-width"
+              disabled={
+                busy ||
+                user.role !== 'guest' ||
+                !p.published ||
+                p.suspended ||
+                user.id === 'visitor'
+              }
+            >
+              {busy ? 'Reserving…' : 'Reserve this stay'} <ArrowRight size={16} />
+            </button>
+            <small className="booking-note">
+              {user.role === 'guest'
+                ? 'Instant confirmation. Payments are not handled here.'
+                : 'Sign in with a guest account to book.'}
+            </small>
+            {user.id === 'visitor' && (
+              <button className="outline full-width" type="button" onClick={onSignIn}>
+                Sign in to book
+              </button>
+            )}
+            <AvailabilityCalendar data={data} property={p} />
+            {occupied.length > 0 && (
+              <div className="occupied">
+                <strong>Already reserved</strong>
+                {occupied.map((r) => (
+                  <span key={r.id}>
+                    {formatDate(r.checkIn)} → {formatDate(r.checkOut)}
+                  </span>
+                ))}
+                <small>Checkout dates are available for new check-ins.</small>
+              </div>
+            )}
+          </form>
+        ) : (
+          <aside className="booking-box">
+            <h3>
+              {money(p.price)} <small>/ night</small>
+            </h3>
+            <p>
+              {user.role === 'host'
+                ? 'Manage this listing from your host dashboard.'
+                : 'Reservations are available to guest accounts.'}
+            </p>
+            <AvailabilityCalendar data={data} property={p} />
+          </aside>
+        )}
       </div>
     </Modal>
   );
@@ -1454,6 +1699,7 @@ function PropertyEditor({
     [uploading, setUploading] = useState(false);
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (saving || uploading) return;
     setError('');
     setSaving(true);
     try {
@@ -1756,7 +2002,8 @@ function ReservationList({
   onNotice: (text: string) => void;
 }) {
   const [query, setQuery] = useState(''),
-    [summary, setSummary] = useState<Reservation | null>(null);
+    [summaryId, setSummary] = useState<string | null>(null);
+  const summary = data.reservations.find((r) => r.id === summaryId);
   const indexes = useMemo(() => buildIndexes(data), [data]);
   const all = data.reservations.filter(
     (r) =>
@@ -1794,18 +2041,29 @@ function ReservationList({
         <div className="empty-state">
           <CalendarDays size={30} />
           <h3>
-            {query ? 'No accessible booking with that reference.' : 'Your next stay is waiting.'}
+            {query
+              ? 'No accessible booking with that reference.'
+              : user.role === 'host'
+                ? 'No guest reservations yet.'
+                : user.role === 'admin'
+                  ? 'No reservations yet.'
+                  : 'Your next stay is waiting.'}
           </h3>
           <p>
             {query
               ? 'Try the exact booking reference, such as LS-DEMO0001.'
-              : 'Confirmed and cancelled reservations will appear here.'}
+              : user.role === 'host'
+                ? 'Guest reservations for your hosted properties will appear here.'
+                : user.role === 'admin'
+                  ? 'Reservations across all properties will appear here.'
+                  : 'Confirmed and cancelled reservations will appear here.'}
           </p>
         </div>
       ) : (
         <div className="reservation-grid">
           {records.map((r) => {
             const p = indexes.properties.get(r.propertyId);
+            const stayNights = nights(r.checkIn, r.checkOut);
             return (
               <article className="reservation-card" key={r.id}>
                 <img src={p?.image ?? photos[0]} alt="" />
@@ -1819,12 +2077,13 @@ function ReservationList({
                     {formatDate(r.checkIn)} → {formatDate(r.checkOut)}
                   </p>
                   <p>
-                    {r.guests} guests · {nights(r.checkIn, r.checkOut)} nights
+                    {r.guests} guest{r.guests === 1 ? '' : 's'} · {stayNights} night
+                    {stayNights === 1 ? '' : 's'}
                     {user.role !== 'guest' && ` · ${indexes.users.get(r.guestId)?.name ?? 'Guest'}`}
                   </p>
                   <div className="reservation-bottom">
                     <strong>{money(r.total)}</strong>
-                    <button className="text-button" onClick={() => setSummary(r)}>
+                    <button className="text-button" onClick={() => setSummary(r.id)}>
                       Booking summary
                     </button>
                     {user.role !== 'guest' &&

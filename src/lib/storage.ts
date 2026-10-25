@@ -6,7 +6,28 @@ const record = (value: unknown): value is RecordValue =>
   typeof value === 'object' && value !== null;
 const text = (v: unknown): v is string => typeof v === 'string';
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const boolean = (v: unknown): v is boolean => typeof v === 'boolean';
+const optional = (v: unknown, valid: (value: unknown) => boolean) => v === undefined || valid(v);
+const oneOf = (v: unknown, values: string[]) => text(v) && values.includes(v);
+const textFields = (row: RecordValue, keys: string[]) => keys.every((key) => text(row[key]));
+const dateRange = (start: unknown, end: unknown) =>
+  text(start) && text(end) && validDate(start) && validDate(end) && end > start;
+const validUser = (u: unknown) =>
+  record(u) &&
+  textFields(u, ['id', 'name']) &&
+  oneOf(u.role, ['guest', 'host', 'admin']) &&
+  optional(u.hostStatus, (v) => oneOf(v, ['pending', 'approved', 'rejected'])) &&
+  optional(u.suspended, boolean) &&
+  ['email', 'bio'].every((key) => optional(u[key], text));
 const uniqueIds = (rows: { id: string }[]) => new Set(rows.map((r) => r.id)).size === rows.length;
+const optionalRows = (value: unknown, valid: (row: RecordValue) => boolean) =>
+  optional(
+    value,
+    (rows) =>
+      Array.isArray(rows) &&
+      rows.every((row) => record(row) && text(row.id) && valid(row)) &&
+      uniqueIds(rows),
+  );
 function validData(value: unknown): value is Data {
   if (
     !record(value) ||
@@ -17,17 +38,7 @@ function validData(value: unknown): value is Data {
   )
     return false;
   const { users, properties, reservations } = value;
-  if (
-    users.length !== 5 ||
-    !users.every(
-      (u) =>
-        record(u) &&
-        text(u.id) &&
-        text(u.name) &&
-        ['guest', 'host', 'admin'].includes(String(u.role)),
-    )
-  )
-    return false;
+  if (!users.every(validUser)) return false;
   if (
     !properties.every(
       (p) =>
@@ -48,7 +59,12 @@ function validData(value: unknown): value is Data {
         Array.isArray(p.amenities) &&
         p.amenities.every(text) &&
         typeof p.published === 'boolean' &&
-        typeof p.suspended === 'boolean',
+        typeof p.suspended === 'boolean' &&
+        optional(p.approval, (v) => oneOf(v, ['pending', 'approved', 'rejected'])) &&
+        ['address', 'propertyType', 'houseRules', 'checkInInstructions'].every((key) =>
+          optional(p[key], text),
+        ) &&
+        optional(p.images, (v) => Array.isArray(v) && v.every(text)),
     )
   )
     return false;
@@ -68,8 +84,42 @@ function validData(value: unknown): value is Data {
         finite(r.nightlyRate) &&
         r.nightlyRate > 0 &&
         finite(r.total) &&
-        ['confirmed', 'cancelled'].includes(String(r.status)),
+        oneOf(r.status, ['confirmed', 'cancelled', 'checked-in', 'completed']),
     )
+  )
+    return false;
+  if (
+    !optional(value.currentUser, (u) => u === null || validUser(u)) ||
+    !optional(value.favorites, (v) => Array.isArray(v) && v.every(text)) ||
+    !optionalRows(
+      value.calendar,
+      (c) =>
+        text(c.propertyId) &&
+        dateRange(c.start, c.end) &&
+        oneOf(c.kind, ['booking', 'blocked']) &&
+        optional(c.reason, text),
+    ) ||
+    !optionalRows(
+      value.reviews,
+      (r) =>
+        textFields(r, ['bookingId', 'propertyId', 'guestId', 'body', 'createdAt']) &&
+        finite(r.rating) &&
+        Number.isInteger(r.rating) &&
+        r.rating >= 1 &&
+        r.rating <= 5 &&
+        boolean(r.hidden),
+    ) ||
+    !optionalRows(value.threads, (t) =>
+      textFields(t, ['propertyId', 'guestId', 'hostId', 'updatedAt']),
+    ) ||
+    !optionalRows(value.messages, (m) =>
+      textFields(m, ['threadId', 'senderId', 'body', 'createdAt']),
+    ) ||
+    !optionalRows(
+      value.notifications,
+      (n) => textFields(n, ['userId', 'body', 'createdAt']) && boolean(n.read),
+    ) ||
+    !optionalRows(value.audit, (a) => textFields(a, ['actorId', 'action', 'targetId', 'createdAt']))
   )
     return false;
   const data = value as Data;

@@ -10,6 +10,7 @@ import {
   nights,
   saveProperty,
   toggleSuspension,
+  today,
   validateDates,
   validDate,
   type Filters,
@@ -29,7 +30,10 @@ const filters: Filters = {
   checkOut: '',
   sort: 'recommended',
 };
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 describe('reservation rules', () => {
   it('creates a booking with a reference index and immutable booked rate', () => {
     const d = fresh();
@@ -113,11 +117,60 @@ describe('reservation rules', () => {
       /no longer/,
     );
   });
+  it('respects calendar blocks, listing approval, and account suspension at confirmation', () => {
+    const d = fresh();
+    const blocked = {
+      ...d,
+      calendar: [
+        {
+          id: 'block',
+          propertyId: 'stay-01',
+          start: booking.checkIn,
+          end: booking.checkOut,
+          kind: 'blocked' as const,
+        },
+      ],
+    };
+    expect(() => createBooking(blocked, d.users[0], booking, now)).toThrow(/reserved/);
+    for (const approval of ['pending', 'rejected'] as const)
+      expect(() =>
+        createBooking(
+          { ...d, properties: [{ ...d.properties[0], approval }] },
+          d.users[0],
+          booking,
+          now,
+        ),
+      ).toThrow(/no longer/);
+    for (const hostStatus of ['pending', 'rejected'] as const)
+      expect(() =>
+        createBooking(
+          { ...d, users: d.users.map((u) => (u.id === 'host-1' ? { ...u, hostStatus } : u)) },
+          d.users[0],
+          booking,
+          now,
+        ),
+      ).toThrow(/no longer/);
+    for (const id of ['guest-1', 'host-1'])
+      expect(() =>
+        createBooking(
+          { ...d, users: d.users.map((u) => (u.id === id ? { ...u, suspended: true } : u)) },
+          d.users[0],
+          booking,
+          now,
+        ),
+      ).toThrow();
+  });
   it('uses date-only arithmetic across months and leap years', () => {
     expect(nights('2028-02-28', '2028-03-01')).toBe(2);
     expect(addDays('2028-02-28', 2)).toBe('2028-03-01');
     expect(validDate('2030-02-30')).toBe(false);
     expect(() => validateDates('2030-01-01', '2030-01-02', now)).not.toThrow();
+  });
+  it('uses the Manila calendar date even before the UTC day changes', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-01-01T16:01:00Z'));
+    expect(today()).toBe('2030-01-02');
+    expect(() => validateDates('2030-01-01', '2030-01-03')).toThrow(/past/);
   });
 });
 
@@ -152,6 +205,29 @@ describe('listing management and search', () => {
     });
     expect(next.properties).toHaveLength(16);
     expect(buildIndexes(next).properties.get('new-stay')?.title).toBe('New listing');
+    expect(buildIndexes(next).properties.get('new-stay')?.approval).toBe('pending');
+  });
+  it('requires review after edits and does not let hosts bypass moderation', () => {
+    const d = fresh();
+    const edited = saveProperty(d, d.users[2], { ...d.properties[0], approval: 'approved' });
+    expect(edited.properties[0].approval).toBe('pending');
+    expect(findProperties(edited, filters).some(({ property }) => property.id === 'stay-01')).toBe(
+      false,
+    );
+  });
+  it('requires an active canonical actor for management mutations', () => {
+    const d = fresh();
+    expect(() => toggleSuspension(d, { ...d.users[0], role: 'admin' }, 'stay-01')).toThrow(
+      /admins/,
+    );
+    expect(() =>
+      saveProperty(d, { ...d.users[0], role: 'host' }, { ...d.properties[0], hostId: 'guest-1' }),
+    ).toThrow(/hosts/);
+    const booked = createBooking(d, d.users[0], booking, now);
+    const suspended = { ...booked, users: booked.users.map((u) => ({ ...u, suspended: true })) };
+    expect(() => cancelBooking(suspended, d.users[0], booked.reservations[0].id, now)).toThrow();
+    expect(() => saveProperty(suspended, d.users[2], d.properties[0])).toThrow(/hosts/);
+    expect(() => toggleSuspension(suspended, d.users[4], 'stay-01')).toThrow(/admins/);
   });
   it('places every fictional listing inside the North Caloocan search area', () => {
     const d = fresh();
@@ -194,6 +270,43 @@ describe('listing management and search', () => {
         (r) => r.property.id === 'stay-01',
       ),
     ).toBe(true);
+  });
+  it('uses price as the primary sort for accepted fuzzy matches', () => {
+    const d = fresh();
+    d.properties = [
+      { ...d.properties[0], id: 'exact', title: 'Pool', amenities: [], price: 4000 },
+      { ...d.properties[0], id: 'fuzzy', title: 'Pol', amenities: [], price: 2000 },
+    ];
+    expect(
+      findProperties(d, { ...filters, query: 'pool' }).map(({ property }) => property.id),
+    ).toEqual(['exact', 'fuzzy']);
+    expect(
+      findProperties(d, { ...filters, query: 'pool', sort: 'price-low' }).map(
+        ({ property }) => property.id,
+      ),
+    ).toEqual(['fuzzy', 'exact']);
+    d.properties[1].price = 5000;
+    expect(
+      findProperties(d, { ...filters, query: 'pool', sort: 'price-high' }).map(
+        ({ property }) => property.id,
+      ),
+    ).toEqual(['fuzzy', 'exact']);
+  });
+  it('omits listings from hosts whose accounts are suspended or awaiting approval', () => {
+    const d = fresh();
+    for (const patch of [
+      { suspended: true },
+      { hostStatus: 'pending' as const },
+      { hostStatus: 'rejected' as const },
+    ]) {
+      const restricted = {
+        ...d,
+        users: d.users.map((u) => (u.id === 'host-1' ? { ...u, ...patch } : u)),
+      };
+      expect(
+        findProperties(restricted, filters).every(({ property }) => property.hostId !== 'host-1'),
+      ).toBe(true);
+    }
   });
 });
 
@@ -243,6 +356,45 @@ describe('local persistence and fresh demo', () => {
     });
     expect(loadData().data.properties).toHaveLength(15);
     expect(() => persistData(fresh())).toThrow('full');
+  });
+  it('round trips added accounts, booking lifecycle states, and optional collections', () => {
+    mockStorage();
+    const d = seedData();
+    d.users.push({ id: 'guest-3', name: 'New guest', role: 'guest' });
+    d.reservations[0].status = 'checked-in';
+    d.reservations[1].status = 'completed';
+    d.currentUser = d.users[0];
+    d.calendar = [
+      {
+        id: 'block',
+        propertyId: 'stay-01',
+        start: booking.checkIn,
+        end: booking.checkOut,
+        kind: 'blocked',
+      },
+    ];
+    d.favorites = ['stay-01'];
+    d.reviews = [];
+    d.threads = [];
+    d.messages = [];
+    d.notifications = [];
+    d.audit = [];
+    persistData(d);
+    expect(loadData()).toEqual({ data: d, warning: '' });
+  });
+  it.each([
+    { calendar: {} },
+    { favorites: ['stay-01', 4] },
+    { reviews: [{ id: 'review', rating: 9 }] },
+    { threads: [null] },
+    { messages: [{ id: 'message' }] },
+    { notifications: [{ id: 'notice', read: 'yes' }] },
+    { audit: 'broken' },
+    { currentUser: { id: 'guest-1', role: 'superadmin' } },
+  ])('recovers corrupt optional data: %j', (patch) => {
+    const entries = mockStorage();
+    entries[STORAGE_KEY] = JSON.stringify({ ...fresh(), ...patch });
+    expect(loadData().warning).not.toBe('');
   });
   it('resets persisted changes to five accounts and fifteen original listings', () => {
     mockStorage();

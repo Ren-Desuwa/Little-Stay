@@ -10,8 +10,8 @@ export function hashPassword(password: string) {
   return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
 }
 export function verifyPassword(password: string, hash: string) {
+  if (!/^[a-f0-9]{32}:[a-f0-9]{128}$/.test(hash)) return false;
   const [salt, key] = hash.split(':');
-  if (!salt || !key || key.length !== 128) return false;
   return timingSafeEqual(scryptSync(password, salt, 64), Buffer.from(key, 'hex'));
 }
 export function openDatabase(path: string) {

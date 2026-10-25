@@ -35,7 +35,7 @@ For example, on Linux/macOS:
 API_PORT=3002 VITE_PORT=5175 LITTLE_STAY_DATA_DIR=/tmp/little-stay-test npm run dev
 ```
 
-The API restarts when its source changes during development. Existing sessions and data survive normal restarts. The UI refreshes account-scoped data every ten seconds while the tab is visible.
+The API restarts when its source changes during development. Existing sessions and data survive normal restarts. The UI refreshes account-scoped data every ten seconds while the tab is visible. Hosts open directly on their dashboard, see only their own listings (including drafts and pending listings), and can edit them with Edit listing. Only guest accounts can book.
 
 ## Local accounts and seed data
 
@@ -43,17 +43,19 @@ A fresh database automatically seeds **50 fictional properties**, five accounts,
 
 All seeded accounts initially use **`LittleStay123!`**. Use **Sign in**, or expand the seeded-account helper to fill the login form. These are real password-checked sessions, not a role-switching dropdown. Change seeded passwords in Profile if you use the local application beyond testing.
 
-| Email                   | Role  | Seed access                                                                     |
-| ----------------------- | ----- | ------------------------------------------------------------------------------- |
-| alex@littlestay.local   | Guest | Alex's bookings, favorites, reviews, conversations                              |
-| jamie@littlestay.local  | Guest | Jamie's separate records                                                        |
-| isabel@littlestay.local | Host  | 75 properties and their associated reservations                                 |
-| marco@littlestay.local  | Host  | 75 other properties and associated reservations                                 |
-| admin@littlestay.local  | Admin | Account/listing approvals, suspensions, moderation, reports, backups, audit log |
+| Email                   | Role  | Seed access                                                            |
+| ----------------------- | ----- | ---------------------------------------------------------------------- |
+| alex@littlestay.local   | Guest | Alex's bookings, favorites, reviews, conversations                     |
+| jamie@littlestay.local  | Guest | Jamie's separate records                                               |
+| isabel@littlestay.local | Host  | 27 properties and their associated reservations                        |
+| marco@littlestay.local  | Host  | 23 other properties and associated reservations                        |
+| admin@littlestay.local  | Admin | Account/listing approvals, suspensions, moderation, reports, audit log |
 
 New registrations can request Guest or Host access. Host accounts start pending and require admin approval. Admin registration is intentionally unavailable. Account suspension invalidates active sessions. Password changes invalidate other sessions. Sessions expire after eight hours.
 
 ## Features
+
+The navigation reappears when scrolling up, and a floating back-to-top button appears on longer pages. The admin dashboard has sticky tabs for Listings, Reservations, Accounts, Reviews, and Activity log, with arrow-key, Home, and End navigation.
 
 - **Accounts:** registration, login/logout, editable name/bio, password changes, database-backed sessions, guest/host/admin permissions, host approvals, account suspension/restore.
 - **Properties:** host-owned listing creation/editing, neighborhood/type, address, guest capacity, bedrooms, amenities, nightly prices, multiple images and cover selection, house rules, private check-in instructions, map placement, publish/unpublish, admin approval/rejection and suspension/restore.
@@ -65,8 +67,8 @@ New registrations can request Guest or Host access. Host accounts start pending 
 - **Notifications:** booking events, messages, approvals, account changes, and reviews; unread indicator and mark-all-read action.
 - **Reviews:** one review per completed guest-owned reservation, ratings, property review display, and admin hide/restore moderation.
 - **Reports:** host-scoped or admin-wide booking counts, booked accommodation value, calendar occupancy, date ranges up to 366 days, and CSV export. Occupancy counts reserved nights within the selected period, including upcoming reservations; booked value is not collected revenue.
-- **Local data tools:** transactional schema migration, persisted SQLite data and uploaded photos, admin backup download/restore, session invalidation after restore, and activity log.
-- **Algorithm lab:** hash buckets/chains/collisions/lookup comparisons, Levenshtein matrix and matched words, and stepwise Voronoi clipping using the same frontend algorithm implementations as search and map selection.
+- **Local data tools:** transactional schema migration, persisted SQLite data and uploaded photos, and activity log.
+- **Algorithm lab (admin only):** Interactive bucket insertion with custom keys, 12 sample keys, and a preset of eight colliding keys. Overflow chains show where colliding records are placed; duplicate keys update existing entries. Play/Pause, replay, previous/next steps, speed controls, and a seekable timeline for all three demos. Watch boxed lookup keys travel into their buckets and compare clickable application records, with found/collision/missing presets. Fuzzy search highlights each compared letter, shows the three edit costs, and plays a clickable optimal alignment with per-word search tolerance. Explore Levenshtein matrix dependencies and animated Voronoi half-plane clipping with bisectors and kept/discarded areas. Inputs reset playback; switching tabs or hiding the browser stops playback. The demos follow the same frontend algorithms as search and map selection, with reduced-motion support for geometry transitions.
 
 Editing a listing sends it back to pending review. A published flag alone does not bypass approval. Suspension/unpublishing/host suspension prevents new bookings while preserving existing reservation history. Private check-in instructions are sent only to the responsible host/admin and guests with an uncancelled reservation for that property.
 
@@ -76,21 +78,17 @@ Dates use ISO date-only values and Asia/Manila's current date. Stays use `[check
 
 Guests can cancel their own upcoming confirmed bookings. Admins can cancel confirmed bookings. Hosts/admins can check in confirmed stays during their reserved dates and record checkout for checked-in stays. Only completed stays can receive a review. Booking totals snapshot nightly rate × nights; later listing price changes do not alter existing reservations.
 
-## Persistence and backups
+## Persistence
 
 The default database is `.local/data/little-stay.sqlite`; user-uploaded images are in `.local/data/uploads/`. Both are ignored by Git. Sessions, accounts, bookings, conversations, favorites, reviews, and notifications live in SQL, not localStorage. The old prototype's browser data remains untouched and is not automatically imported.
 
 Schema versions 1–3 are applied transactionally and recorded in the migrations table. Version 2 unpublishes surplus generated listings from the previous 150-property dataset while preserving their bookings and related records. User-created listings remain unchanged. Version 3 upgrades untouched demo galleries to three photos while preserving customized and uploaded photos. Opening a database with a newer schema is refused rather than silently downgraded.
 
-Admin → Backups and restore downloads a JSON backup containing all application tables and referenced uploaded images. It excludes session tokens. Restoring validates the format, property data, image hashes, and foreign keys, replaces data transactionally, and signs everyone out. Log back in with an account/password from the restored backup. A failed restore leaves database records and sessions unchanged.
-
 Image uploads accept JPEG, PNG, or WebP, up to 4 MB per image and eight per property. The upload control replaces the current photo set; cover selection and individual removal are available. At least one photo is required. SQL references use content-hashed local filenames.
-
-JSON backup/restore is limited to 50 MB. For larger datasets, stop the application and copy the entire data directory, including uploads, as a filesystem backup. Backups contain private account information and password hashes; keep them local. Do not commit them to Git.
 
 ## Algorithms and architecture
 
-- `server/app.ts`: validated API routes, sessions/permissions, bookings, upload handling, messages/reviews/notifications, reports, backups, and safe error boundaries.
+- `server/app.ts`: validated API routes, sessions/permissions, bookings, upload handling, messages/reviews/notifications, reports, and safe error boundaries.
 - `server/db.ts`: relational schema, migration, transactions, password hashing, and dense seed generation.
 - `src/lib/algorithms.ts`: custom separate-chaining hash table, Levenshtein dynamic programming, projection, half-plane clipping, bounded Voronoi cells, and deterministic point location.
 - `src/lib/model.ts`: shared types, date and search helpers; the server independently authorizes and validates every persisted mutation.
@@ -109,12 +107,12 @@ Passwords use Node's `scrypt` with random salts. Session tokens use cryptographi
 4. Register a Host account; observe its pending status and disabled listing creation. Sign in as admin to approve it.
 5. Create or edit a listing as a host, publish it for review, and approve it as admin. Existing booking rates remain unchanged.
 6. Use the completed seeded booking under Jamie to publish a review. Test moderation and notifications.
-7. Open Reports, choose a date range, and export CSV. Download an admin backup, make a change, then restore the backup and sign in again.
-8. Present all three custom algorithms in the lab. The hash and booking-reference views respect the current account's access.
+7. Open Reports, choose a date range, and export CSV. Inspect the admin activity log.
+8. Sign in as admin to present all three custom algorithms in the lab. The hash and booking-reference views respect the current account's access.
 
 ## Verification and limits
 
-Run `npm test` for the algorithm/domain regression and HTTP integration suites. They include concurrent double-booking, permissions, private conversations, real uploads, image backup round trips, failed-restore rollback, sessions/password changes, host/listing approvals, report scoping, CSV escaping, and migration version checks. See `VERIFICATION.md` for the recorded browser walkthrough and production-mode smoke check.
+Run `npm test` for the algorithm/domain regression and HTTP integration suites. They include concurrent double-booking, permissions, private conversations, real uploads, atomic image writes, sessions/password changes, host/listing approvals, report scoping, CSV escaping, and migration version checks. See `VERIFICATION.md` for the recorded browser walkthrough and production-mode smoke check.
 
 All core application behavior runs locally after dependencies are installed. OpenStreetMap street tiles require internet; markers and geometry still work when tiles fail. No cloud deployment, payments, email/SMS service, GPS, or travel-time routing is included. Messages and notifications update by polling, not push delivery. This is intended for the requested local project, with fictional seed content.
 

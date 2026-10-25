@@ -1,5 +1,9 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
+
+let openDialogs = 0;
+let previousOverflow = '';
+
 export default function Modal({
   title,
   onClose,
@@ -12,28 +16,42 @@ export default function Modal({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     const dialog = ref.current;
     dialog?.showModal();
-    const previous = document.body.style.overflow;
+    if (openDialogs === 0) previousOverflow = document.body.style.overflow;
+    openDialogs += 1;
     document.body.style.overflow = 'hidden';
     return () => {
       dialog?.close();
-      document.body.style.overflow = previous;
+      openDialogs -= 1;
+      if (openDialogs === 0) document.body.style.overflow = previousOverflow;
     };
   }, []);
   return (
     <dialog
       ref={ref}
       className={`modal ${wide ? 'wide' : ''}`}
-      onCancel={onClose}
-      onClick={(e) => {
-        if (e.target === ref.current) onClose();
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
       }}
-      aria-labelledby="modal-title"
+      onClick={(e) => {
+        if (e.target !== ref.current) return;
+        const bounds = e.currentTarget.getBoundingClientRect();
+        if (
+          e.clientX < bounds.left ||
+          e.clientX > bounds.right ||
+          e.clientY < bounds.top ||
+          e.clientY > bounds.bottom
+        )
+          onClose();
+      }}
+      aria-labelledby={titleId}
     >
       <div className="modal-heading">
-        <h2 id="modal-title">{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <button className="icon-button" onClick={onClose} aria-label="Close dialog">
           <X size={20} />
         </button>

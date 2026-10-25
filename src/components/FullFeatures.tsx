@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Bell, Check, Download, MessageCircle, Send, Star, Upload } from 'lucide-react';
+import { Bell, Check, Download, MessageCircle, Send, Star } from 'lucide-react';
 import Modal from './Modal';
 import { change, getState, request } from '../lib/api';
 import {
@@ -22,6 +22,7 @@ function useAction(props: Props) {
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   async function run(path: string, body?: unknown, method = 'POST', message = 'Saved.') {
+    if (busy) return false;
     setError('');
     setBusy(true);
     try {
@@ -60,6 +61,7 @@ export function AuthModal({
     [error, setError] = useState('');
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setError('');
     setBusy(true);
     try {
@@ -105,7 +107,7 @@ export function AuthModal({
           <input
             type="password"
             required
-            minLength={register ? 10 : 1}
+            minLength={register ? 8 : 1}
             maxLength={128}
             autoComplete={register ? 'new-password' : 'current-password'}
             value={password}
@@ -245,7 +247,7 @@ export function AccountPage(props: Props) {
             <input
               type="password"
               required
-              minLength={10}
+              minLength={8}
               maxLength={128}
               autoComplete="new-password"
               value={password}
@@ -265,10 +267,14 @@ export function MessagesPage(props: Props) {
   const { data, user } = props,
     { run, error, busy } = useAction(props),
     [selected, setSelected] = useState(''),
-    [body, setBody] = useState('');
+    [drafts, setDrafts] = useState<Record<string, string>>({});
   const threads = data.threads ?? [],
     thread = threads.find((t) => t.id === selected) ?? threads[0];
   const messages = (data.messages ?? []).filter((m) => m.threadId === thread?.id);
+  const body = thread ? (drafts[thread.id] ?? '') : '';
+  useEffect(() => {
+    if (!threads.some((t) => t.id === selected)) setSelected(threads[0]?.id ?? '');
+  }, [threads, selected]);
   return (
     <section className="page-section">
       <div className="eyebrow">A LITTLE CONVERSATION</div>
@@ -328,7 +334,9 @@ export function MessagesPage(props: Props) {
                   if (
                     await run(`/threads/${thread.id}/messages`, { body }, 'POST', 'Message sent.')
                   )
-                    setBody('');
+                    setDrafts((current) =>
+                      current[thread.id] === body ? { ...current, [thread.id]: '' } : current,
+                    );
                 }}
               >
                 <label className="sr-only" htmlFor="message-body">
@@ -341,7 +349,9 @@ export function MessagesPage(props: Props) {
                   rows={2}
                   placeholder="Write a message…"
                   value={body}
-                  onChange={(e) => setBody(e.target.value)}
+                  onChange={(e) =>
+                    setDrafts((current) => ({ ...current, [thread.id]: e.target.value }))
+                  }
                 />
                 <button className="primary" disabled={busy || !body.trim()}>
                   <Send size={17} /> Send
@@ -505,201 +515,158 @@ export function HostTools(props: Props) {
     </section>
   );
 }
-export function AdminTools(props: Props) {
+export function AdminTools(props: Props & { section: 'accounts' | 'reviews' | 'activity' }) {
   const { data } = props,
     { run, error, busy } = useAction(props);
-  const [backup, setBackup] = useState<File | null>(null),
-    [confirm, setConfirm] = useState(false);
   return (
     <section className="dashboard-tools">
-      <h2>Account management</h2>
-      <p>
-        Approve host applications and suspend or restore accounts. Administrator accounts are
-        protected.
-      </p>
-      <div className="table-scroll">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Account</th>
-              <th>Role / status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.users.map((u) => (
-              <tr key={u.id}>
-                <td>
-                  <strong>{u.name}</strong>
-                  <small className="block-small">{u.email}</small>
-                </td>
-                <td>
-                  {u.role} ·{' '}
-                  {u.suspended ? 'suspended' : u.role === 'host' ? u.hostStatus : 'active'}
-                </td>
-                <td>
-                  {u.role !== 'admin' && (
-                    <div className="table-actions">
-                      {u.role === 'host' && u.hostStatus !== 'approved' && (
-                        <button
-                          className="outline small"
-                          disabled={busy}
-                          onClick={() =>
-                            void run(
-                              `/admin/users/${u.id}`,
-                              { action: 'approve' },
-                              'POST',
-                              'Host approved.',
-                            )
-                          }
-                        >
-                          Approve host
-                        </button>
-                      )}
-                      {u.role === 'host' && u.hostStatus === 'pending' && (
-                        <button
-                          className="text-button"
-                          disabled={busy}
-                          onClick={() =>
-                            void run(
-                              `/admin/users/${u.id}`,
-                              { action: 'reject' },
-                              'POST',
-                              'Host application rejected.',
-                            )
-                          }
-                        >
-                          Reject
-                        </button>
-                      )}
-                      <button
-                        className="outline small"
-                        disabled={busy}
-                        onClick={() =>
-                          void run(
-                            `/admin/users/${u.id}`,
-                            { action: u.suspended ? 'restore' : 'suspend' },
-                            'POST',
-                            'Account updated.',
-                          )
-                        }
-                      >
-                        {u.suspended ? 'Restore' : 'Suspend'}
-                      </button>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <h2>Review moderation</h2>
-      <div className="block-list">
-        {data.reviews?.map((r) => (
-          <div key={r.id}>
-            <span>
-              <strong>{r.rating}/5</strong> · {r.body}
-            </span>
-            <button
-              className="outline small"
-              disabled={busy}
-              onClick={() =>
-                void run(
-                  `/admin/reviews/${r.id}`,
-                  { hidden: !r.hidden },
-                  'POST',
-                  'Review visibility updated.',
-                )
-              }
-            >
-              {r.hidden ? 'Restore review' : 'Hide review'}
-            </button>
-          </div>
-        ))}
-      </div>
-      <h2>Backups and restore</h2>
-      <p>
-        Download accounts, listings, bookings, messages, reviews, and uploaded images. A backup
-        includes private account data; keep it locally. Restoring replaces the database and signs
-        out all sessions.
-      </p>
-      <div className="backup-tools">
-        <a className="outline" href="/api/admin/backup" download>
-          <Download size={16} /> Download backup
-        </a>
-        <label>
-          Choose backup JSON (up to 50 MB)
-          <input
-            type="file"
-            accept="application/json,.json"
-            onChange={(e) => setBackup(e.target.files?.[0] ?? null)}
-          />
-        </label>
-        <button className="primary" disabled={!backup || busy} onClick={() => setConfirm(true)}>
-          <Upload size={16} /> Restore backup
-        </button>
-      </div>
-      {confirm && (
-        <Modal title="Replace the local database?" onClose={() => setConfirm(false)}>
+      {props.section === 'accounts' && (
+        <>
+          <h2>Account management</h2>
           <p>
-            This replaces current accounts, properties, and all activity with the selected backup.
-            Download a backup first if you want to keep the current data.
+            Approve host applications and suspend or restore accounts. Administrator accounts are
+            protected.
           </p>
-          <div className="modal-actions">
-            <button className="outline" onClick={() => setConfirm(false)}>
-              Cancel
-            </button>
-            <button
-              className="primary"
-              disabled={busy}
-              onClick={async () => {
-                if (!backup) return;
-                const form = new FormData();
-                form.set('backup', backup);
-                if (
-                  await run(
-                    '/admin/restore',
-                    form,
-                    'POST',
-                    'Backup restored. Sign in with an account from the restored backup.',
-                  )
-                )
-                  setConfirm(false);
-              }}
-            >
-              Restore database
-            </button>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th>Role / status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.users.map((u) => (
+                  <tr key={u.id}>
+                    <td>
+                      <strong>{u.name}</strong>
+                      <small className="block-small">{u.email}</small>
+                    </td>
+                    <td>
+                      {u.role} ·{' '}
+                      {u.suspended ? 'suspended' : u.role === 'host' ? u.hostStatus : 'active'}
+                    </td>
+                    <td>
+                      {u.role !== 'admin' && (
+                        <div className="table-actions">
+                          {u.role === 'host' && u.hostStatus !== 'approved' && (
+                            <button
+                              className="outline small"
+                              disabled={busy}
+                              onClick={() =>
+                                void run(
+                                  `/admin/users/${u.id}`,
+                                  { action: 'approve' },
+                                  'POST',
+                                  'Host approved.',
+                                )
+                              }
+                            >
+                              Approve host
+                            </button>
+                          )}
+                          {u.role === 'host' && u.hostStatus === 'pending' && (
+                            <button
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() =>
+                                void run(
+                                  `/admin/users/${u.id}`,
+                                  { action: 'reject' },
+                                  'POST',
+                                  'Host application rejected.',
+                                )
+                              }
+                            >
+                              Reject
+                            </button>
+                          )}
+                          <button
+                            className="outline small"
+                            disabled={busy}
+                            onClick={() =>
+                              void run(
+                                `/admin/users/${u.id}`,
+                                { action: u.suspended ? 'restore' : 'suspend' },
+                                'POST',
+                                'Account updated.',
+                              )
+                            }
+                          >
+                            {u.suspended ? 'Restore' : 'Suspend'}
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </Modal>
+        </>
       )}
-      <h2>Activity log</h2>
-      <div className="table-scroll">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Actor</th>
-              <th>Action</th>
-              <th>Record</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.audit?.map((a) => (
-              <tr key={a.id}>
-                <td>
-                  {new Date(a.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}
-                </td>
-                <td>{data.users.find((u) => u.id === a.actorId)?.name ?? a.actorId}</td>
-                <td>{a.action}</td>
-                <td>
-                  <code>{a.targetId}</code>
-                </td>
-              </tr>
+      {props.section === 'reviews' && (
+        <>
+          <h2>Review moderation</h2>
+          <div className="block-list">
+            {data.reviews?.map((r) => (
+              <div key={r.id}>
+                <span>
+                  <strong>{r.rating}/5</strong> · {r.body}
+                </span>
+                <button
+                  className="outline small"
+                  disabled={busy}
+                  onClick={() =>
+                    void run(
+                      `/admin/reviews/${r.id}`,
+                      { hidden: !r.hidden },
+                      'POST',
+                      'Review visibility updated.',
+                    )
+                  }
+                >
+                  {r.hidden ? 'Restore review' : 'Hide review'}
+                </button>
+              </div>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </div>
+          {!data.reviews?.length && <p>No reviews to moderate yet.</p>}
+        </>
+      )}
+      {props.section === 'activity' && (
+        <>
+          <h2>Activity log</h2>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Actor</th>
+                  <th>Action</th>
+                  <th>Record</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.audit?.map((a) => (
+                  <tr key={a.id}>
+                    <td>
+                      {new Date(a.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}
+                    </td>
+                    <td>{data.users.find((u) => u.id === a.actorId)?.name ?? a.actorId}</td>
+                    <td>{a.action}</td>
+                    <td>
+                      <code>{a.targetId}</code>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!data.audit?.length && <p>No activity recorded yet.</p>}
+        </>
+      )}
       <ErrorText text={error} />
     </section>
   );
@@ -715,6 +682,7 @@ export function GuestReviews(props: Props) {
   const [bookingId, setBooking] = useState(''),
     [rating, setRating] = useState(5),
     [body, setBody] = useState('');
+  const selectedBooking = eligible.find((r) => r.id === bookingId) ?? eligible[0];
   return (
     <section className="dashboard-tools">
       <h2>Your reviews</h2>
@@ -726,7 +694,7 @@ export function GuestReviews(props: Props) {
             if (
               await run(
                 '/reviews',
-                { bookingId: bookingId || eligible[0]?.id, rating, body },
+                { bookingId: selectedBooking?.id, rating, body },
                 'POST',
                 'Thank you. Your review has been published.',
               )
@@ -738,10 +706,7 @@ export function GuestReviews(props: Props) {
         >
           <label>
             Completed stay
-            <select
-              value={bookingId || eligible[0]?.id}
-              onChange={(e) => setBooking(e.target.value)}
-            >
+            <select value={selectedBooking?.id ?? ''} onChange={(e) => setBooking(e.target.value)}>
               {eligible.map((r) => (
                 <option key={r.id} value={r.id}>
                   {props.data.properties.find((p) => p.id === r.propertyId)?.title} · {r.reference}
@@ -794,17 +759,35 @@ export function GuestReviews(props: Props) {
     </section>
   );
 }
+type Report = {
+  start: string;
+  end: string;
+  totalBookings: number;
+  occupancy: number;
+  bookedValue: number;
+  rows: {
+    propertyId: string;
+    property: string;
+    bookings: number;
+    occupiedNights: number;
+    occupancy: number;
+    bookedValue: number;
+  }[];
+};
+
 export function ReportsPage(props: Props) {
   const [start, setStart] = useState(today().slice(0, 7) + '-01'),
     [end, setEnd] = useState(addDays(today(), 30)),
-    [report, setReport] = useState<any>(null),
+    [report, setReport] = useState<Report | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   async function load() {
+    if (busy) return;
     setBusy(true);
     setError('');
+    setReport(null);
     try {
-      setReport(await request(`/reports?start=${start}&end=${end}`));
+      setReport(await request<Report>(`/reports?start=${start}&end=${end}`));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -840,13 +823,22 @@ export function ReportsPage(props: Props) {
         <button className="primary" disabled={busy}>
           {busy ? 'Loading…' : 'Update report'}
         </button>
-        <a href={`/api/reports?start=${start}&end=${end}&format=csv`} className="outline" download>
-          <Download size={16} /> Export CSV
-        </a>
+        {report && (
+          <a
+            href={`/api/reports?start=${report.start}&end=${report.end}&format=csv`}
+            className="outline"
+            download
+          >
+            <Download size={16} /> Export CSV
+          </a>
+        )}
       </form>
       <ErrorText text={error} />
       {report && (
         <>
+          <p role="status">
+            Report period: {report.start} → {report.end} (exclusive)
+          </p>
           <div className="stats-grid">
             <div>
               <strong>{report.totalBookings}</strong>
@@ -873,7 +865,7 @@ export function ReportsPage(props: Props) {
                 </tr>
               </thead>
               <tbody>
-                {report.rows.map((r: any) => (
+                {report.rows.map((r) => (
                   <tr key={r.propertyId}>
                     <td>{r.property}</td>
                     <td>{r.bookings}</td>

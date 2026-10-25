@@ -1,6 +1,6 @@
-import { beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import supertest from 'supertest';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from './app';
@@ -8,6 +8,10 @@ import { openDatabase } from './db';
 import { addDays, today, findProperties } from '../src/lib/model';
 import { region } from '../src/lib/region';
 import { voronoi, locateCell, project, nearestSite } from '../src/lib/algorithms';
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, writeFileSync: vi.fn(actual.writeFileSync) };
+});
 let runtime: ReturnType<typeof createApplication>, directory: string;
 const appHeader = { 'X-Little-Stay': '1', Origin: 'http://127.0.0.1:5173' };
 const password = 'LittleStay123!';
@@ -50,6 +54,12 @@ function listing() {
 }
 
 describe('full local API', () => {
+  it('sets the standard referrer policy needed to identify web map tile requests', async () => {
+    await supertest(runtime.app)
+      .get('/api/health')
+      .expect('Referrer-Policy', 'strict-origin-when-cross-origin')
+      .expect(200);
+  });
   it('seeds 50 dense, geographically valid listings without leaking credentials or reservations', async () => {
     const d = await state();
     expect(d.properties).toHaveLength(50);
@@ -101,6 +111,16 @@ describe('full local API', () => {
         (r: any) => hd.properties.find((p: any) => p.id === r.propertyId)?.hostId === 'host-1',
       ),
     ).toBe(true);
+    expect(hd.properties.length).toBeGreaterThan(0);
+    expect(hd.properties.every((p: any) => p.hostId === hd.currentUser.id)).toBe(true);
+    const secondHost = await login('marco');
+    const secondState = await state(secondHost);
+    expect(secondState.properties.length).toBeGreaterThan(0);
+    expect(secondState.properties.every((p: any) => p.hostId === secondState.currentUser.id)).toBe(
+      true,
+    );
+    await h.post('/api/bookings').set(appHeader).send(input()).expect(403);
+    await secondHost.post('/api/bookings').set(appHeader).send(input()).expect(403);
     await a.post('/api/auth/logout').set(appHeader).expect(200);
     expect((await state(a)).currentUser).toBeNull();
   });
@@ -164,6 +184,36 @@ describe('full local API', () => {
     expect((await state(other)).currentUser).toBeNull();
     expect((await state(a)).currentUser.id).toBe('guest-1');
   });
+  it('accepts eight-character passwords and rejects shorter passwords for registration and changes', async () => {
+    const agent = supertest.agent(runtime.app);
+    const account = { name: 'Password Boundary', email: 'boundary@example.test', role: 'guest' };
+    await agent
+      .post('/api/auth/register')
+      .set(appHeader)
+      .send({ ...account, password: 'Seven12' })
+      .expect(400);
+    await agent
+      .post('/api/auth/register')
+      .set(appHeader)
+      .send({ ...account, password: 'Eight123' })
+      .expect(201);
+    await agent
+      .post('/api/profile/password')
+      .set(appHeader)
+      .send({ currentPassword: 'Eight123', newPassword: 'Seven12' })
+      .expect(400);
+    await agent
+      .post('/api/profile/password')
+      .set(appHeader)
+      .send({ currentPassword: 'Eight123', newPassword: 'NewPass8' })
+      .expect(200);
+    await agent.post('/api/auth/logout').set(appHeader).expect(200);
+    await agent
+      .post('/api/auth/login')
+      .set(appHeader)
+      .send({ email: account.email, password: 'NewPass8' })
+      .expect(200);
+  });
   it('prevents overlapping concurrent reservations and permits adjacent stays', async () => {
     const a = await login(),
       b = await login('jamie');
@@ -219,6 +269,31 @@ describe('full local API', () => {
     await a.post(`/api/bookings/${bid}/cancel`).set(appHeader).expect(200);
     expect((await state(a)).calendar.some((c: any) => c.id === 'busy-' + bid)).toBe(false);
   });
+  it('keeps private instructions hidden after a cancelled booking on an unpublished listing', async () => {
+    const guest = await login();
+    const bookingId = await book(guest);
+    const host = await login('marco');
+    await host
+      .post('/api/properties/stay-010/publish')
+      .set(appHeader)
+      .send({ published: false })
+      .expect(200);
+    expect(
+      (await state(guest)).properties.find((p: any) => p.id === 'stay-010').checkInInstructions,
+    ).toBeTruthy();
+    await guest.post(`/api/bookings/${bookingId}/cancel`).set(appHeader).expect(200);
+    const property = (await state(guest)).properties.find((p: any) => p.id === 'stay-010');
+    expect(property).toMatchObject({ published: false });
+    expect(property).not.toHaveProperty('checkInInstructions');
+  });
+  it('rejects a cover image outside the listing gallery', async () => {
+    const host = await login('isabel');
+    await host
+      .post('/api/properties')
+      .set(appHeader)
+      .send({ ...listing(), image: '/images/apartment-6.jpg', images: ['/images/apartment-1.jpg'] })
+      .expect(400);
+  });
   it('enforces listing ownership and admin approval after new listings and edits', async () => {
     const h = await login('isabel'),
       p = listing();
@@ -242,6 +317,12 @@ describe('full local API', () => {
       .send({ ...p, title: 'Edited Local Apartment' })
       .expect(200);
     expect((await state()).properties.some((p: any) => p.id === created.body.id)).toBe(false);
+    const edited = (await state(h)).properties.find((p: any) => p.id === created.body.id);
+    expect(edited).toMatchObject({
+      title: 'Edited Local Apartment',
+      hostId: 'host-1',
+      approval: 'pending',
+    });
   });
   it('blocks and releases host availability while preventing overlap with bookings', async () => {
     const h = await login('marco'),
@@ -266,6 +347,20 @@ describe('full local API', () => {
     expect((await state(b)).favorites).not.toContain('stay-010');
     await a.post('/api/favorites/stay-010').set(appHeader).expect(200);
     expect((await state(a)).favorites).not.toContain('stay-010');
+  });
+  it('prevents new favorites and conversations for suspended hosts while allowing favorite removal', async () => {
+    const guest = await login();
+    await guest.post('/api/favorites/stay-001').set(appHeader).expect(200);
+    const admin = await login('admin');
+    await admin
+      .post('/api/admin/users/host-1')
+      .set(appHeader)
+      .send({ action: 'suspend' })
+      .expect(200);
+    await guest.post('/api/favorites/stay-001').set(appHeader).expect(200);
+    expect((await state(guest)).favorites).not.toContain('stay-001');
+    await guest.post('/api/favorites/stay-001').set(appHeader).expect(404);
+    await guest.post('/api/threads').set(appHeader).send({ propertyId: 'stay-001' }).expect(404);
   });
   it('keeps guest/host conversations private and notifies the recipient', async () => {
     const a = await login(),
@@ -389,6 +484,49 @@ describe('full local API', () => {
       .expect(200)
       .expect('Content-Type', /image\/jpeg/);
   });
+  it('preserves existing uploaded image bytes when a replacement write fails partway through', async () => {
+    const host = await login('isabel');
+    const image = readFileSync('public/images/apartment-1.jpg');
+    const uploaded = (
+      await host.post('/api/uploads').set(appHeader).attach('photos', image, 'room.jpg').expect(201)
+    ).body.images[0];
+    const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      vi.mocked(writeFileSync).mockImplementationOnce((path) => {
+        actual.writeFileSync(path, 'partial image');
+        throw Object.assign(new Error('Simulated full disk.'), { code: 'ENOSPC' });
+      });
+      await host
+        .post('/api/uploads')
+        .set(appHeader)
+        .attach('photos', image, 'room.jpg')
+        .expect(500);
+      expect(readFileSync(join(directory, uploaded))).toEqual(image);
+      expect(readdirSync(join(directory, 'uploads'))).toEqual([uploaded.slice('/uploads/'.length)]);
+    } finally {
+      logged.mockRestore();
+      vi.mocked(writeFileSync).mockReset().mockImplementation(actual.writeFileSync);
+    }
+  });
+  it('allows eight images and rejects extra multipart fields and oversized request bodies', async () => {
+    const host = await login('isabel');
+    const image = readFileSync('public/images/apartment-1.jpg');
+    let request = host.post('/api/uploads').set(appHeader);
+    for (let i = 0; i < 8; i++) request = request.attach('photos', image, `room-${i}.jpg`);
+    expect((await request.expect(201)).body.images).toHaveLength(8);
+    await host
+      .post('/api/uploads')
+      .set(appHeader)
+      .field('unused', 'value')
+      .attach('photos', image, 'room.jpg')
+      .expect(400);
+    await supertest(runtime.app)
+      .post('/api/auth/login')
+      .set(appHeader)
+      .send({ email: 'alex@littlestay.local', password: 'a'.repeat(1024 * 1024) })
+      .expect(413);
+  });
   it('reports occupancy with clipped dates and exports scoped CSV', async () => {
     const admin = await login('admin'),
       a = await login(),
@@ -403,48 +541,12 @@ describe('full local API', () => {
     expect(csv.text).toContain('The Sunday Studio');
     expect(csv.text).not.toContain('A Little Above the City');
   });
-  it('backs up and restores all tables and images atomically, revoking sessions', async () => {
-    const admin = await login('admin'),
-      a = await login();
-    const bid = await book(a);
-    const host = await login('isabel');
-    const uploaded = (
-      await host
-        .post('/api/uploads')
-        .set(appHeader)
-        .attach('photos', readFileSync('public/images/apartment-1.jpg'), 'room.jpg')
-        .expect(201)
-    ).body.images[0];
-    await host
-      .patch('/api/properties/stay-001')
-      .set(appHeader)
-      .send({ ...listing(), image: uploaded, images: [uploaded] })
-      .expect(200);
-    const backup = (await admin.get('/api/admin/backup').expect(200)).body;
-    expect(backup.images).toHaveLength(1);
-    expect(backup.tables.properties).toHaveLength(50);
-    await a.post(`/api/bookings/${bid}/cancel`).set(appHeader).expect(200);
-    await admin
-      .post('/api/admin/restore')
-      .set(appHeader)
-      .attach('backup', Buffer.from(JSON.stringify(backup)), 'backup.json')
-      .expect(200);
-    expect((await state(admin)).currentUser).toBeNull();
-    await supertest(runtime.app).get(uploaded).expect(200);
-    const signedIn = await login();
-    expect((await state(signedIn)).reservations.find((r: any) => r.id === bid).status).toBe(
-      'confirmed',
-    );
-  });
-  it('rejects malformed backups without altering existing data or sessions', async () => {
+  it('does not expose database backup or restore endpoints, even to administrators', async () => {
     const admin = await login('admin');
-    await admin
-      .post('/api/admin/restore')
-      .set(appHeader)
-      .attach('backup', Buffer.from('{"version":99}'), 'backup.json')
-      .expect(400);
-    expect((await state(admin)).currentUser.role).toBe('admin');
-    expect((await state()).properties).toHaveLength(50);
+    const before = await state(admin);
+    await admin.get('/api/admin/backup').expect(404);
+    await admin.post('/api/admin/restore').set(appHeader).send({}).expect(404);
+    expect(await state(admin)).toEqual(before);
   });
   it('persists data when the application process is reopened', async () => {
     const a = await login();
@@ -462,17 +564,18 @@ describe('full local API', () => {
     expect((await state(current)).currentUser.name).toBe('Persistent Alex');
     expect((await state()).properties).toHaveLength(50);
   });
-  it('rolls back an invalid backup relationship without deleting active sessions', async () => {
-    const admin = await login('admin');
-    const backup = (await admin.get('/api/admin/backup')).body;
-    backup.tables.reservations[0].guest_id = 'missing-user';
-    await admin
-      .post('/api/admin/restore')
+  it('returns the actual schema version and treats malformed stored password hashes as invalid credentials', async () => {
+    expect((await supertest(runtime.app).get('/api/health').expect(200)).body.schemaVersion).toBe(
+      3,
+    );
+    runtime.db
+      .prepare("UPDATE users SET password_hash=? WHERE id='guest-1'")
+      .run('a'.repeat(32) + ':' + 'z'.repeat(128));
+    await supertest(runtime.app)
+      .post('/api/auth/login')
       .set(appHeader)
-      .attach('backup', Buffer.from(JSON.stringify(backup)), 'invalid.json')
-      .expect(400);
-    expect((await state(admin)).currentUser.role).toBe('admin');
-    expect((await state()).properties).toHaveLength(50);
+      .send({ email: 'alex@littlestay.local', password })
+      .expect(401);
   });
   it('rate-limits repeated unsuccessful sign-ins', async () => {
     for (let i = 0; i < 6; i++)

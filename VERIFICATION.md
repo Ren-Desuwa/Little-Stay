@@ -1,5 +1,15 @@
 # Full implementation verification
 
+## Current implementation — October 25, 2026
+
+Admin database backup and restore have been removed from the dashboard, API, and current feature documentation. Their regression cases were replaced by a check that both former endpoints return HTTP 404 even for an administrator, without changing records or the active session. Ordinary database persistence remains covered.
+
+The current project passes **109 tests across 8 files**, the frontend/server TypeScript checks, and a warning-free production build. A server-rendered UI smoke check confirms the five remaining admin tabs: Listings, Reservations, Accounts, Reviews, and Activity log. No new browser walkthrough was run for this removal.
+
+See [AUDIT.md](AUDIT.md) for the earlier audit findings, browser verification, dependency checks, and verification limits. That audit's 120-test result predates feature removal. The October 21 results below are also historical and describe earlier application versions.
+
+## Historical implementation verification
+
 Verified October 21, 2026 on the `full` branch. The application runs locally with a React frontend, Express API, and SQLite database. No payment workflow or hosted deployment is included.
 
 ## Automated checks

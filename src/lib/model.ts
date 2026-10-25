@@ -179,21 +179,35 @@ export function buildIndexes(data: Data) {
     references,
   };
 }
+function activeActor(data: Data, actor: User) {
+  return data.users.find((u) => u.id === actor.id && u.role === actor.role && !u.suspended);
+}
+function bookableProperty(data: Data, property: Property) {
+  const host = data.users.find((u) => u.id === property.hostId && u.role === 'host');
+  return (
+    property.published &&
+    !property.suspended &&
+    (property.approval === undefined || property.approval === 'approved') &&
+    !!host &&
+    !host.suspended &&
+    (host.hostStatus === undefined || host.hostStatus === 'approved')
+  );
+}
 export function createBooking(
   data: Data,
   actor: User,
   input: { propertyId: string; checkIn: string; checkOut: string; guests: number },
   now = today(),
 ): Data {
-  if (actor.role !== 'guest' || !data.users.some((u) => u.id === actor.id && u.role === 'guest'))
+  if (actor.role !== 'guest' || !activeActor(data, actor))
     throw new Error('Switch to a guest account to book a stay.');
   const property = buildIndexes(data).properties.get(input.propertyId);
-  if (!property || !property.published || property.suspended)
+  if (!property || !bookableProperty(data, property))
     throw new Error('This property is no longer available for booking.');
   validateDates(input.checkIn, input.checkOut, now);
   if (!Number.isInteger(input.guests) || input.guests < 1 || input.guests > property.capacity)
     throw new Error(`Choose between 1 and ${property.capacity} guests.`);
-  if (!available(property.id, input.checkIn, input.checkOut, data.reservations))
+  if (!available(property.id, input.checkIn, input.checkOut, data.reservations, data.calendar))
     throw new Error('Those dates are already reserved. Please choose another stay.');
   const id = `res-${crypto.randomUUID()}`;
   const reference = `LS-${id.slice(4, 12).toUpperCase()}`;
@@ -212,6 +226,7 @@ export function createBooking(
   return { ...data, reservations: [reservation, ...data.reservations] };
 }
 export function cancelBooking(data: Data, actor: User, id: string, now = today()): Data {
+  if (!activeActor(data, actor)) throw new Error('You cannot cancel this reservation.');
   const r = buildIndexes(data).reservations.get(id);
   if (!r) throw new Error('Reservation not found.');
   if (r.status !== 'confirmed') throw new Error('This reservation has already been cancelled.');
@@ -226,7 +241,13 @@ export function cancelBooking(data: Data, actor: User, id: string, now = today()
   };
 }
 export function saveProperty(data: Data, actor: User, property: Property): Data {
-  if (actor.role !== 'host') throw new Error('Only hosts can edit listings.');
+  const host = activeActor(data, actor);
+  if (
+    actor.role !== 'host' ||
+    !host ||
+    (host.hostStatus !== undefined && host.hostStatus !== 'approved')
+  )
+    throw new Error('Only approved hosts can edit listings.');
   const existing = buildIndexes(data).properties.get(property.id);
   if (property.hostId !== actor.id || (existing && existing.hostId !== actor.id))
     throw new Error('You can only edit your own listings.');
@@ -257,6 +278,7 @@ export function saveProperty(data: Data, actor: User, property: Property): Data 
     title: property.title.trim(),
     neighborhood: property.neighborhood.trim(),
     suspended: existing?.suspended ?? false,
+    approval: 'pending' as const,
   };
   return {
     ...data,
@@ -266,7 +288,8 @@ export function saveProperty(data: Data, actor: User, property: Property): Data 
   };
 }
 export function toggleSuspension(data: Data, actor: User, id: string): Data {
-  if (actor.role !== 'admin') throw new Error('Only admins can suspend listings.');
+  if (actor.role !== 'admin' || !activeActor(data, actor))
+    throw new Error('Only admins can suspend listings.');
   if (!buildIndexes(data).properties.get(id)) throw new Error('Property not found.');
   return {
     ...data,
@@ -292,9 +315,7 @@ export function findProperties(data: Data, f: Filters) {
   return data.properties
     .filter(
       (p) =>
-        p.published &&
-        !p.suspended &&
-        (p.approval === undefined || p.approval === 'approved') &&
+        bookableProperty(data, p) &&
         (!f.neighborhood || p.neighborhood === f.neighborhood) &&
         (!f.propertyType || p.propertyType === f.propertyType) &&
         p.bedrooms >= (f.minBedrooms ?? 0) &&
@@ -308,13 +329,13 @@ export function findProperties(data: Data, f: Filters) {
     )
     .map((property) => ({ property, ...matchText(f.query, searchableText(property)) }))
     .filter((p) => p.accepted)
-    .sort(
-      (a, b) =>
-        a.score - b.score ||
-        (f.sort === 'price-low'
+    .sort((a, b) => {
+      const priceOrder =
+        f.sort === 'price-low'
           ? a.property.price - b.property.price
           : f.sort === 'price-high'
             ? b.property.price - a.property.price
-            : a.property.id.localeCompare(b.property.id)),
-    );
+            : 0;
+      return priceOrder || a.score - b.score || a.property.id.localeCompare(b.property.id);
+    });
 }

@@ -2,6 +2,7 @@ import { region } from './region';
 import { describe, expect, it } from 'vitest';
 import {
   HashTable,
+  clipHalfPlane,
   constructionSteps,
   distanceMatrix,
   levenshtein,
@@ -9,6 +10,7 @@ import {
   matchText,
   nearestSite,
   planeBounds,
+  pointInPolygon,
   project,
   voronoi,
 } from './algorithms';
@@ -107,6 +109,33 @@ describe('bounded Voronoi clipping and point location', () => {
       { id: 'a', lat: region.center.lat, lng: region.center.lng - 0.006 },
     ];
     expect(locateCell({ x: 0, y: 0 }, voronoi(pair))).toBe('a');
+  });
+  it('uses the same ID ordering for coincident cells, nearest-site lookup, and construction', () => {
+    const coincident = ['a', 'B', 'A-1'].map((id) => ({ id, ...region.center }));
+    const expected = nearestSite({ x: 0, y: 0 }, coincident)?.id;
+    const cells = voronoi(coincident);
+    expect(locateCell({ x: 0, y: 0 }, cells)).toBe(expected);
+    for (const site of coincident)
+      expect(constructionSteps(site, coincident).at(-1)?.polygon).toEqual(
+        cells.find((cell) => cell.id === site.id)?.polygon,
+      );
+  });
+  it('keeps tolerant clipping intersections inside their original edges', () => {
+    const polygon = [
+      { x: 0.5e-9, y: 0 },
+      { x: 2e-9, y: 1 },
+      { x: 2e-9, y: -1 },
+    ];
+    for (const point of clipHalfPlane(polygon, 1, 0, 0)) {
+      expect(point.x).toBeGreaterThanOrEqual(0.5e-9);
+      expect(point.x).toBeLessThanOrEqual(2e-9);
+      expect(Math.abs(point.y)).toBeLessThanOrEqual(1);
+    }
+  });
+  it('does not locate arbitrary points inside zero-area cells', () => {
+    const collapsed = Array.from({ length: 3 }, () => ({ x: 0, y: 0 }));
+    expect(pointInPolygon({ x: 1, y: 1 }, collapsed)).toBe(false);
+    expect(locateCell({ x: 1, y: 1 }, [{ id: 'collapsed', polygon: collapsed }])).toBeUndefined();
   });
   it('finishes step construction with the same cell as the production algorithm', () => {
     const steps = constructionSteps(sites[2], sites);

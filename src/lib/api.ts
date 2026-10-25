@@ -13,6 +13,11 @@ export const emptyData: Data = {
   notifications: [],
   audit: [],
 };
+let stateSequence = 0;
+const stateOrder = new WeakMap<Data, number>();
+
+export const getStateOrder = (data: Data) => stateOrder.get(data) ?? 0;
+
 export async function request<T = { ok: boolean; id?: string }>(
   path: string,
   method = 'GET',
@@ -28,13 +33,39 @@ export async function request<T = { ok: boolean; id?: string }>(
     },
     body: body === undefined ? undefined : form ? body : JSON.stringify(body),
   });
-  const value = await response
-    .json()
-    .catch(() => ({ error: 'The local server did not return a valid response.' }));
-  if (!response.ok) throw new Error(value.error ?? 'The request failed.');
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    throw new Error('The local server did not return a valid response.');
+  }
+  if (!response.ok) {
+    const error = value && typeof value === 'object' && 'error' in value ? value.error : null;
+    throw new Error(typeof error === 'string' ? error : 'The request failed.');
+  }
   return value as T;
 }
-export const getState = () => request<Data>('/state');
+export async function getState() {
+  const order = ++stateSequence;
+  const data = await request<Data>('/state');
+  if (
+    !data ||
+    data.version !== 1 ||
+    !Array.isArray(data.users) ||
+    !Array.isArray(data.properties) ||
+    !Array.isArray(data.reservations) ||
+    !['calendar', 'favorites', 'reviews', 'threads', 'messages', 'notifications', 'audit'].every(
+      (key) => data[key as keyof Data] === undefined || Array.isArray(data[key as keyof Data]),
+    ) ||
+    (data.currentUser != null &&
+      (typeof data.currentUser.id !== 'string' ||
+        typeof data.currentUser.name !== 'string' ||
+        !['guest', 'host', 'admin'].includes(data.currentUser.role)))
+  )
+    throw new Error('The local server returned invalid application data.');
+  stateOrder.set(data, order);
+  return data;
+}
 export async function change(path: string, body?: unknown, method = 'POST') {
   await request(path, method, body);
   return getState();

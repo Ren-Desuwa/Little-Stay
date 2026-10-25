@@ -120,8 +120,10 @@ export function clipHalfPlane(polygon: Point[], a: number, b: number, c: number)
       insideQ = fq <= EPS;
     if (insideP) out.push(p);
     if (insideP !== insideQ) {
-      const t = fp / (fp - fq);
-      out.push({ x: p.x + t * (q.x - p.x), y: p.y + t * (q.y - p.y) });
+      // Tolerance can classify a point just outside the line as inside. Keep
+      // the intersection on the edge instead of extrapolating past that point.
+      const t = Math.max(0, Math.min(1, fp / (fp - fq)));
+      out.push(t === 0 ? p : t === 1 ? q : { x: p.x + t * (q.x - p.x), y: p.y + t * (q.y - p.y) });
     }
   }
   return out;
@@ -135,7 +137,7 @@ export function voronoi(sites: Site[], bounds = planeBounds): Cell[] {
       if (site.id === other.id) continue;
       const q = project(other.lat, other.lng);
       if (Math.abs(p.x - q.x) < EPS && Math.abs(p.y - q.y) < EPS) {
-        if (other.id < site.id) polygon = [];
+        if (other.id.localeCompare(site.id) < 0) polygon = [];
         continue;
       }
       polygon = clipHalfPlane(
@@ -151,6 +153,11 @@ export function voronoi(sites: Site[], bounds = planeBounds): Cell[] {
 }
 export function pointInPolygon(p: Point, polygon: Point[]) {
   if (polygon.length < 3) return false;
+  const twiceArea = polygon.reduce((area, a, i) => {
+    const b = polygon[(i + 1) % polygon.length];
+    return area + a.x * b.y - b.x * a.y;
+  }, 0);
+  if (twiceArea <= 0) return false;
   // Clipped cells are counterclockwise convex polygons. Include shared boundaries.
   return polygon.every((a, i) => {
     const b = polygon[(i + 1) % polygon.length];
@@ -178,7 +185,7 @@ export function constructionSteps(site: Site, sites: Site[]) {
     if (site.id === other.id) continue;
     const q = project(other.lat, other.lng);
     if (Math.abs(p.x - q.x) < EPS && Math.abs(p.y - q.y) < EPS) {
-      if (other.id < site.id) polygon = [];
+      if (other.id.localeCompare(site.id) < 0) polygon = [];
     } else
       polygon = clipHalfPlane(
         polygon,

@@ -2,7 +2,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import multer from 'multer';
 import { z } from 'zod';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
@@ -52,32 +52,33 @@ const imagePath = z
   .regex(
     /^\/(?:images\/(?:apartment-[1-6]|hotel-[1-8])\.jpg|uploads\/[a-f0-9]{64}\.(?:jpg|png|webp))$/,
   );
-const propertyInput = z.object({
-  title: text(2, 80),
-  neighborhood: z.enum(['Camarin', 'Deparo', 'Bagumbong', 'Tala', 'Bagong Silang']),
-  description: text(10, 1500),
-  price: z.number().finite().min(1).max(100000),
-  capacity: z.number().int().min(1).max(20),
-  bedrooms: z.number().int().min(0).max(10),
-  amenities: z.array(z.enum(amenities)).max(8),
-  lat: z.number().min(region.bounds.south).max(region.bounds.north),
-  lng: z.number().min(region.bounds.west).max(region.bounds.east),
-  image: imagePath,
-  images: z.array(imagePath).min(1).max(8),
-  published: z.boolean(),
-  address: text(5, 200),
-  propertyType: z.enum(['Studio', 'Apartment', 'House', 'Private room']),
-  houseRules: text(1, 1500),
-  checkInInstructions: text(1, 1500),
-});
-const password = z.string().min(10, 'Use at least 10 characters.').max(128);
+const propertyInput = z
+  .object({
+    title: text(2, 80),
+    neighborhood: z.enum(['Camarin', 'Deparo', 'Bagumbong', 'Tala', 'Bagong Silang']),
+    description: text(10, 1500),
+    price: z.number().finite().min(1).max(100000),
+    capacity: z.number().int().min(1).max(20),
+    bedrooms: z.number().int().min(0).max(10),
+    amenities: z.array(z.enum(amenities)).max(8),
+    lat: z.number().min(region.bounds.south).max(region.bounds.north),
+    lng: z.number().min(region.bounds.west).max(region.bounds.east),
+    image: imagePath,
+    images: z.array(imagePath).min(1).max(8),
+    published: z.boolean(),
+    address: text(5, 200),
+    propertyType: z.enum(['Studio', 'Apartment', 'House', 'Private room']),
+    houseRules: text(1, 1500),
+    checkInInstructions: text(1, 1500),
+  })
+  .refine((value) => value.images.includes(value.image), {
+    path: ['image'],
+    message: 'Choose a cover from the listing photos.',
+  });
+const password = z.string().min(8, 'Use at least 8 characters.').max(128);
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 4 * 1024 * 1024, files: 8 },
-});
-const restoreUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 4 * 1024 * 1024, files: 8, fields: 0, parts: 8 },
 });
 function imageExtension(buffer: Buffer) {
   if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpg';
@@ -106,11 +107,21 @@ export function createApplication(options: {
   const db = openDatabase(options.databasePath);
   if (options.seed !== false) seedDatabase(db);
   mkdirSync(options.uploadsPath, { recursive: true });
+  function installImage(name: string, buffer: Buffer) {
+    const temporary = join(options.uploadsPath, `.${id()}.tmp`);
+    try {
+      // A failed write must never truncate an image referenced by existing listings.
+      writeFileSync(temporary, buffer, { flag: 'wx' });
+      renameSync(temporary, join(options.uploadsPath, name));
+    } finally {
+      rmSync(temporary, { force: true });
+    }
+  }
   const app = express();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Referrer-Policy', 'same-origin');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('X-Frame-Options', 'DENY');
     next();
   });
@@ -200,18 +211,17 @@ export function createApplication(options: {
         .get(pid, end, start)
     );
   }
+  function publiclyAvailable(p: any) {
+    if (!p || !p.published || p.suspended || p.approval !== 'approved') return false;
+    const owner = rawUser(db, p.host_id);
+    return owner?.role === 'host' && owner.host_status === 'approved' && !owner.suspended;
+  }
   function state(req: Request) {
     const u = session(req);
     const all = db.prepare('SELECT * FROM properties ORDER BY id').all() as any[];
     const visible = all.filter(
       (p) =>
-        u?.role === 'admin' ||
-        (u?.role === 'host' && p.host_id === u.id) ||
-        (p.published &&
-          !p.suspended &&
-          p.approval === 'approved' &&
-          rawUser(db, p.host_id)?.host_status === 'approved' &&
-          !rawUser(db, p.host_id)?.suspended),
+        u?.role === 'admin' || (u?.role === 'host' ? p.host_id === u.id : publiclyAvailable(p)),
     );
     const visibleIds = new Set(visible.map((p) => p.id));
     const reservations = (
@@ -223,7 +233,7 @@ export function createApplication(options: {
           r.guest_id === u.id ||
           (u.role === 'host' && rawProperty(db, r.property_id)?.host_id === u.id)),
     );
-    const properties = visible.map((p) => {
+    const serializeProperty = (p: any) => {
       const v = propertyFromRow(p);
       if (!(
         u &&
@@ -235,13 +245,14 @@ export function createApplication(options: {
       ))
         delete v.checkInInstructions;
       return v;
-    });
+    };
+    const properties = visible.map(serializeProperty);
     // Include booked properties even after suspension/unpublishing, without making them bookable.
     reservations.forEach((r) => {
       if (!visibleIds.has(r.property_id)) {
         const p = rawProperty(db, r.property_id);
         if (p) {
-          properties.push({ ...propertyFromRow(p), published: false });
+          properties.push({ ...serializeProperty(p), published: false });
           visibleIds.add(p.id);
         }
       }
@@ -372,7 +383,11 @@ export function createApplication(options: {
     };
   }
   app.get('/api/health', (_req, res) =>
-    res.json({ ok: true, storage: 'sqlite', schemaVersion: 1 }),
+    res.json({
+      ok: true,
+      storage: 'sqlite',
+      schemaVersion: Number((db.prepare('PRAGMA user_version').get() as any).user_version),
+    }),
   );
   app.get('/api/state', (req, res) => res.json(state(req)));
   app.post('/api/auth/register', (req, res) => {
@@ -480,9 +495,7 @@ export function createApplication(options: {
         buffer: f.buffer,
         name: `${digest(f.buffer)}.${imageExtension(f.buffer)}`,
       }));
-      prepared.forEach((f) =>
-        writeFileSync(join(options.uploadsPath, f.name), f.buffer, { flag: 'w' }),
-      );
+      prepared.forEach((f) => installImage(f.name, f.buffer));
       res.status(201).json({ images: prepared.map((f) => `/uploads/${f.name}`) });
     },
   );
@@ -584,16 +597,7 @@ export function createApplication(options: {
     validateDates(v.checkIn, v.checkOut);
     const booking = transaction(db, () => {
       const p = rawProperty(db, v.propertyId);
-      const owner = p ? rawUser(db, p.host_id) : null;
-      if (
-        !p ||
-        !p.published ||
-        p.suspended ||
-        p.approval !== 'approved' ||
-        owner?.suspended ||
-        owner?.host_status !== 'approved'
-      )
-        fail(409, 'This property is no longer bookable.');
+      if (!publiclyAvailable(p)) fail(409, 'This property is no longer bookable.');
       if (v.guests > p.capacity) fail(400, 'Guest count exceeds property capacity.');
       if (overlaps(p.id, v.checkIn, v.checkOut))
         fail(409, 'Those dates are already reserved or blocked.');
@@ -671,13 +675,15 @@ export function createApplication(options: {
   app.post('/api/favorites/:id', (req, res) => {
     const u = actor(req, 'guest'),
       p = rawProperty(db, String(req.params.id));
-    if (!p || p.suspended || !p.published || p.approval !== 'approved')
-      fail(404, 'Property not found.');
     const existing = db
       .prepare('SELECT * FROM favorites WHERE user_id=? AND property_id=?')
-      .get(u.id, p.id);
+      .get(u.id, String(req.params.id));
+    if (!existing && !publiclyAvailable(p)) fail(404, 'Property not found.');
     if (existing)
-      db.prepare('DELETE FROM favorites WHERE user_id=? AND property_id=?').run(u.id, p.id);
+      db.prepare('DELETE FROM favorites WHERE user_id=? AND property_id=?').run(
+        u.id,
+        String(req.params.id),
+      );
     else db.prepare('INSERT INTO favorites VALUES(?,?)').run(u.id, p.id);
     res.json({ ok: true });
   });
@@ -685,8 +691,7 @@ export function createApplication(options: {
     const u = actor(req, 'guest'),
       v = z.object({ propertyId: text() }).parse(req.body),
       p = rawProperty(db, v.propertyId);
-    if (!p || p.suspended || !p.published || p.approval !== 'approved')
-      fail(404, 'Property not found.');
+    if (!publiclyAvailable(p)) fail(404, 'Property not found.');
     let thread = db
       .prepare('SELECT id FROM threads WHERE guest_id=? AND property_id=?')
       .get(u.id, p.id) as any;
@@ -897,103 +902,6 @@ export function createApplication(options: {
           : 0,
       });
   });
-  const backupTables = [
-    'users',
-    'properties',
-    'reservations',
-    'blocked_dates',
-    'favorites',
-    'notifications',
-    'threads',
-    'messages',
-    'reviews',
-    'audit',
-  ] as const;
-  app.get('/api/admin/backup', (req, res) => {
-    actor(req, 'admin');
-    const tables = Object.fromEntries(
-      backupTables.map((table) => [table, db.prepare(`SELECT * FROM ${table}`).all()]),
-    );
-    const paths = new Set<string>();
-    for (const row of tables.properties as any[]) {
-      const p = JSON.parse(row.details);
-      for (const image of [p.image, ...(p.images ?? [])])
-        if (typeof image === 'string' && image.startsWith('/uploads/')) paths.add(image.slice(9));
-    }
-    const images = [...paths].map((name) => ({
-      name,
-      data: readFileSync(join(options.uploadsPath, name)).toString('base64'),
-    }));
-    const archive = JSON.stringify({
-      format: 'little-stay-backup',
-      version: 1,
-      exportedAt: stamp(),
-      tables,
-      images,
-    });
-    if (Buffer.byteLength(archive) > 50 * 1024 * 1024)
-      fail(
-        413,
-        'This backup exceeds 50 MB. Stop the application and copy its data directory for a complete filesystem backup.',
-      );
-    res.attachment(`little-stay-backup-${today()}.json`).type('application/json').send(archive);
-  });
-  app.post(
-    '/api/admin/restore',
-    (req, res, next) => {
-      actor(req, 'admin');
-      next();
-    },
-    restoreUpload.single('backup'),
-    (req, res) => {
-      const u = actor(req, 'admin');
-      if (!req.file) fail(400, 'Select a backup JSON file.');
-      let backup: any;
-      try {
-        backup = JSON.parse(req.file!.buffer.toString('utf8'));
-      } catch {
-        fail(400, 'The backup is not valid JSON.');
-      }
-      validateBackup(backup, backupTables);
-      const imageFiles = backup.images.map((image: any) => {
-        const buffer = Buffer.from(image.data, 'base64');
-        if (buffer.length > 4 * 1024 * 1024) fail(400, 'A backup image is too large.');
-        const extension = imageExtension(buffer);
-        if (image.name !== `${digest(buffer)}.${extension}`)
-          fail(400, 'Backup image integrity check failed.');
-        return { name: image.name, buffer };
-      });
-      const imageNames = new Set(imageFiles.map((i: any) => i.name));
-      for (const p of backup.tables.properties) {
-        const details = propertyInput.parse(propertyFromRow(p));
-        for (const image of [details.image, ...details.images])
-          if (image.startsWith('/uploads/') && !imageNames.has(image.slice(9)))
-            fail(400, 'The backup is missing a property image.');
-      }
-      transaction(db, () => {
-        db.exec('DELETE FROM sessions');
-        for (const table of [...backupTables].reverse()) db.exec(`DELETE FROM ${table}`);
-        for (const table of backupTables) {
-          const columns = (db.prepare(`PRAGMA table_info(${table})`).all() as any[]).map(
-            (c) => c.name,
-          );
-          for (const row of backup.tables[table])
-            db.prepare(
-              `INSERT INTO ${table}(${columns.join(',')}) VALUES(${columns.map(() => '?').join(',')})`,
-            ).run(...columns.map((c) => row[c]));
-        }
-        for (const image of imageFiles)
-          writeFileSync(join(options.uploadsPath, image.name), image.buffer);
-        const admin = db
-          .prepare("SELECT id FROM users WHERE role='admin' AND suspended=0")
-          .get() as any;
-        if (!admin) fail(400, 'The backup needs an active administrator.');
-        audit(admin.id, 'database.restore', u.id);
-      });
-      res.clearCookie(cookieName, { path: '/' });
-      res.json({ ok: true });
-    },
-  );
   app.use(
     '/uploads',
     express.static(options.uploadsPath, { dotfiles: 'deny', immutable: true, maxAge: '1y' }),
@@ -1020,11 +928,13 @@ export function createApplication(options: {
     const status =
       error instanceof HttpError
         ? error.status
-        : error instanceof SyntaxError ||
-            String(error.code ?? '').startsWith('SQLITE_CONSTRAINT') ||
-            (Number(error.errcode) & 255) === 19
-          ? 400
-          : 500;
+        : error.type === 'entity.too.large'
+          ? 413
+          : error instanceof SyntaxError ||
+              String(error.code ?? '').startsWith('SQLITE_CONSTRAINT') ||
+              (Number(error.errcode) & 255) === 19
+            ? 400
+            : 500;
     if (status === 500) console.error(error);
     res.status(status).json({
       error:
@@ -1043,112 +953,4 @@ function addMonthsEnd(start: string) {
     fail(400, 'Choose a valid reporting start date.');
   date.setUTCMonth(date.getUTCMonth() + 1);
   return date.toISOString().slice(0, 10);
-}
-function validateBackup(backup: any, tables: readonly string[]) {
-  if (
-    !backup ||
-    backup.format !== 'little-stay-backup' ||
-    backup.version !== 1 ||
-    !backup.tables ||
-    !Array.isArray(backup.images) ||
-    backup.images.length > 500
-  )
-    fail(400, 'Unsupported backup format.');
-  const safeString = (v: any) => typeof v === 'string' && v.length <= 15000;
-  const specs: Record<string, Record<string, 'text' | 'number'>> = {
-    users: {
-      id: 'text',
-      name: 'text',
-      email: 'text',
-      password_hash: 'text',
-      role: 'text',
-      host_status: 'text',
-      suspended: 'number',
-      bio: 'text',
-    },
-    properties: {
-      id: 'text',
-      host_id: 'text',
-      title: 'text',
-      neighborhood: 'text',
-      price: 'number',
-      capacity: 'number',
-      lat: 'number',
-      lng: 'number',
-      published: 'number',
-      suspended: 'number',
-      approval: 'text',
-      details: 'text',
-    },
-    reservations: {
-      id: 'text',
-      reference: 'text',
-      property_id: 'text',
-      guest_id: 'text',
-      check_in: 'text',
-      check_out: 'text',
-      guests: 'number',
-      nightly_rate: 'number',
-      total: 'number',
-      status: 'text',
-      created_at: 'text',
-    },
-    blocked_dates: { id: 'text', property_id: 'text', start: 'text', end: 'text', reason: 'text' },
-    favorites: { user_id: 'text', property_id: 'text' },
-    notifications: {
-      id: 'text',
-      user_id: 'text',
-      body: 'text',
-      read: 'number',
-      created_at: 'text',
-    },
-    threads: {
-      id: 'text',
-      property_id: 'text',
-      guest_id: 'text',
-      host_id: 'text',
-      updated_at: 'text',
-    },
-    messages: {
-      id: 'text',
-      thread_id: 'text',
-      sender_id: 'text',
-      body: 'text',
-      created_at: 'text',
-    },
-    reviews: {
-      id: 'text',
-      booking_id: 'text',
-      property_id: 'text',
-      guest_id: 'text',
-      rating: 'number',
-      body: 'text',
-      hidden: 'number',
-      created_at: 'text',
-    },
-    audit: { id: 'text', actor_id: 'text', action: 'text', target_id: 'text', created_at: 'text' },
-  };
-  for (const table of tables) {
-    if (!Array.isArray(backup.tables[table]) || backup.tables[table].length > 100000)
-      fail(400, 'Invalid backup table.');
-    for (const row of backup.tables[table])
-      for (const [column, type] of Object.entries(specs[table]))
-        if (
-          type === 'text'
-            ? !safeString(row?.[column])
-            : typeof row?.[column] !== 'number' || !Number.isFinite(row[column])
-        )
-          fail(400, `Invalid backup field: ${table}.${column}`);
-  }
-  for (const u of backup.tables.users)
-    if (!/^[a-f0-9]{32}:[a-f0-9]{128}$/.test(u.password_hash))
-      fail(400, 'Invalid password data in backup.');
-  for (const image of backup.images)
-    if (
-      !image ||
-      typeof image.name !== 'string' ||
-      !image.name.match(/^[a-f0-9]{64}\.(jpg|png|webp)$/) ||
-      typeof image.data !== 'string'
-    )
-      fail(400, 'Invalid backup image.');
 }
