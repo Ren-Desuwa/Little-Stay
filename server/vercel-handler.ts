@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
-import { createApplication } from './app';
-import { openRemoteDatabase } from './remote-db';
-import { blobPhotos } from './photos';
+import { createApplication } from './app.js';
+import { openRemoteDatabase } from './remote-db.js';
+import { blobPhotos } from './photos.js';
 
 let initialization: Promise<ReturnType<typeof createApplication>> | undefined;
 export function cloudApplication() {

@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
-import { createApplication } from './app';
-import { serverAddress } from './config';
+import { createApplication } from './app.js';
+import { serverAddress } from './config.js';
 const directory = resolve(process.env.LITTLE_STAY_DATA_DIR ?? '.local/data');
 const runtime = createApplication({
   databasePath: resolve(directory, 'little-stay.sqlite'),

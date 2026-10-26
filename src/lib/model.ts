@@ -1,5 +1,5 @@
-import { region } from './region';
-import { HashTable, indexById, matchText, geoBounds } from './algorithms';
+import { region } from './region.js';
+import { HashTable, indexById, matchText, geoBounds } from './algorithms.js';
 export type Role = 'guest' | 'host' | 'admin';
 export type User = {
   id: string;

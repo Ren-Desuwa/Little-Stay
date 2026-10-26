@@ -2,7 +2,7 @@ import { OAuth2Client, CodeChallengeMethod } from 'google-auth-library';
 import { createHash, randomBytes } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { z } from 'zod';
-import { asyncTransaction, type SqlDatabase } from './remote-db';
+import { asyncTransaction, type SqlDatabase } from './remote-db.js';
 
 const random = () => randomBytes(32).toString('base64url');
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');

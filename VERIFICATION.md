@@ -1,7 +1,8 @@
 # Vercel preparation verification · 2026-10-26
 
+- Native Node runtime: compiled the API to JavaScript and loaded it without Vitest/tsx; it returns the expected JSON configuration response instead of failing module resolution. Relative runtime imports use explicit `.js` extensions.
 - Google sign-in: 13 tests cover OAuth state, PKCE, nonce, token validation, explicit account linking, host approval, suspension, schema migration, and callbacks across libSQL runtimes. Google SDK responses are mocked; live Google login awaits OAuth credentials and deployment.
-- `npm test`: **152/152 passed**, covering every existing test plus production configuration, booking bounds, password reset/session revocation, re-encoded images, deletion requests, local/cloud backups, and cloud import/restore.
+- `npm test`: **153/153 passed**, covering every existing test plus production configuration, booking bounds, password reset/session revocation, re-encoded images, deletion requests, local/cloud backups, and cloud import/restore.
 - `npm run build`: frontend and backend TypeScript checks plus Vite production bundle passed.
 - `npm audit`: **0 vulnerabilities**. Vercel Blob is pinned to 2.4.0 because the newer SDK pulled in an advisory-bearing CLI dependency; the public-photo APIs used here are covered by adapter/integration tests.
 - Real libSQL client tests use two independent connections and app instances against a local database: concurrent bookings yield one 201 and one 409, sessions/logout cross instances, rollback isolates failures, and login limits persist across instances. These tests do not contact a live Turso service.

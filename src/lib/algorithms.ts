@@ -1,4 +1,4 @@
-import { region } from './region';
+import { region } from './region.js';
 /** A separate-chaining hash table. Native Map is deliberately not used. */
 export class HashTable<T> {
   buckets: { key: string; value: T }[][];

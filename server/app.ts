@@ -6,12 +6,12 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, existsSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { asyncTransaction as transaction, RemoteDatabase, type SqlDatabase } from './remote-db';
-import type { PhotoStore } from './photos';
+import { asyncTransaction as transaction, RemoteDatabase, type SqlDatabase } from './remote-db.js';
+import type { PhotoStore } from './photos.js';
 import { setTimeout as delay } from 'node:timers/promises';
-import { publicOrigins, trustProxy } from './config';
-import { securityHeaders } from '../deployment/security';
-import { googleConfiguration, mountGoogleAuth } from './google-auth';
+import { publicOrigins, trustProxy } from './config.js';
+import { securityHeaders } from '../deployment/security.js';
+import { googleConfiguration, mountGoogleAuth } from './google-auth.js';
 import {
   openDatabase,
   seedDatabase,
@@ -21,15 +21,15 @@ import {
   propertyFromRow,
   userFromRow,
   reservationFromRow,
-} from './db';
+} from './db.js';
 import {
   today,
   nights,
   validateDates as domainValidateDates,
   validateBookingDates,
   amenities,
-} from '../src/lib/model';
-import { region } from '../src/lib/region';
+} from '../src/lib/model.js';
+import { region } from '../src/lib/region.js';
 function validateDates(start: string, end: string, now?: string) {
   try {
     if (now === undefined) validateBookingDates(start, end);

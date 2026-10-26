@@ -1,4 +1,4 @@
-import { addDays, today, type Data, type Property } from './model';
+import { addDays, today, type Data, type Property } from './model.js';
 export const photos = [
   '/images/apartment-1.jpg',
   '/images/apartment-2.jpg',

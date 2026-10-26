@@ -1,4 +1,4 @@
-import { securityHeaders } from './security';
+import { securityHeaders } from './security.js';
 
 export function vercelConfig() {
   return {

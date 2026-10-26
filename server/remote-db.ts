@@ -7,11 +7,11 @@ import {
   type InStatement,
 } from '@libsql/client';
 import type { DatabaseSync } from 'node:sqlite';
-import { INITIAL_SCHEMA, openDatabase, seedDatabase, hashPassword, verifyPassword } from './db';
+import { INITIAL_SCHEMA, openDatabase, seedDatabase, hashPassword, verifyPassword } from './db.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { setTimeout as delay } from 'node:timers/promises';
-import { AUTH_SCHEMA } from './auth-schema';
+import { AUTH_SCHEMA } from './auth-schema.js';
 
 export class RemoteDatabase {
   private context = new AsyncLocalStorage<Transaction>();

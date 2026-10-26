@@ -3,9 +3,9 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { seedData, photos, propertyPhotos } from '../src/lib/seed';
-import { today, addDays } from '../src/lib/model';
-import { AUTH_SCHEMA } from './auth-schema';
+import { seedData, photos, propertyPhotos } from '../src/lib/seed.js';
+import { today, addDays } from '../src/lib/model.js';
+import { AUTH_SCHEMA } from './auth-schema.js';
 
 export function hashPassword(password: string) {
   const salt = randomBytes(16).toString('hex');
