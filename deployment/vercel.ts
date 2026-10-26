@@ -3,7 +3,7 @@ import { securityHeaders } from './security';
 export function vercelConfig() {
   return {
     framework: 'vite' as const,
-    installCommand: 'npm ci',
+    installCommand: 'npm ci --include=dev',
     buildCommand: 'npm run build',
     outputDirectory: 'dist',
     regions: ['sin1'],
