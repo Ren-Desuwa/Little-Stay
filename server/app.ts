@@ -463,7 +463,12 @@ export function createApplication<TDatabase extends SqlDatabase = DatabaseSync>(
     res.json({
       ok: true,
       storage: options.database ? 'turso' : 'sqlite',
-      schemaVersion: Number(((await db.prepare('PRAGMA user_version').get()) as any).user_version),
+      schemaVersion:
+        db instanceof RemoteDatabase
+          ? Number(
+              (await db.prepare('SELECT MAX(version) AS version FROM migrations').get())!.version,
+            )
+          : Number(((await db.prepare('PRAGMA user_version').get()) as any).user_version),
     }),
   );
   app.get('/api/state', async (req, res) => res.json(await state(req)));

@@ -78,7 +78,15 @@ export async function openRemoteDatabase(url: string, authToken?: string, bootst
   const db = new RemoteDatabase(createClient({ url, authToken, intMode: 'number' }));
   try {
     await db.withTransaction(async () => {
-      const version = Number((await db.prepare('PRAGMA user_version').get())!.user_version);
+      await db
+        .prepare(
+          'CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
+        )
+        .run();
+      const version = Number(
+        (await db.prepare('SELECT COALESCE(MAX(version),0) AS version FROM migrations').get())!
+          .version,
+      );
       if (version > 4)
         throw new Error('This database uses a newer schema. Update the application.');
       if (version > 0 && version < 3)
@@ -87,10 +95,9 @@ export async function openRemoteDatabase(url: string, authToken?: string, bootst
         await db.batch([
           ...INITIAL_SCHEMA.split(';')
             .map((s) => s.trim())
-            .filter(Boolean),
+            .filter((sql) => sql && !/^PRAGMA\b/i.test(sql)),
           "INSERT OR IGNORE INTO migrations VALUES(2,datetime('now'))",
           "INSERT OR IGNORE INTO migrations VALUES(3,datetime('now'))",
-          'PRAGMA user_version=3',
         ]);
       }
       if (version < 4)
@@ -99,7 +106,6 @@ export async function openRemoteDatabase(url: string, authToken?: string, bootst
             .map((sql) => sql.trim())
             .filter(Boolean),
           "INSERT OR IGNORE INTO migrations VALUES(4,datetime('now'))",
-          'PRAGMA user_version=4',
         ]);
       await db
         .prepare(

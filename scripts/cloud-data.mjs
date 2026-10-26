@@ -38,7 +38,9 @@ export async function backupCloud(destination, env = process.env) {
     const tx = await client.transaction('read');
     const tables = {};
     try {
-      const version = Number((await tx.execute('PRAGMA user_version')).rows[0].user_version);
+      const version = Number(
+        (await tx.execute('SELECT MAX(version) AS version FROM migrations')).rows[0].version,
+      );
       if (version !== 4)
         throw new Error('Upgrade the application schema before taking a cloud backup.');
       for (const table of DATA_TABLES)

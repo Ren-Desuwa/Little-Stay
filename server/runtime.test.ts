@@ -42,7 +42,7 @@ it('loads the emitted API in native Node ESM without a TypeScript loader', () =>
       let status;
       const response = {
         status(value) { status = value; return this; },
-        set() { return this; },
+        setHeader() { return this; },
         json(body) {
           if (status !== 503 || !body.error) throw new Error('Expected configuration response');
           console.log('API loaded and returned configuration response');

@@ -34,9 +34,7 @@ export default async function handler(req: Request, res: Response) {
     return runtime.app(req, res);
   } catch (error) {
     console.error('Little Stay storage initialization failed.', error);
-    res
-      .status(503)
-      .set('Cache-Control', 'no-store')
-      .json({ error: 'Storage is unavailable. Check the deployment configuration.' });
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(503).json({ error: 'Storage is unavailable. Check the deployment configuration.' });
   }
 }
