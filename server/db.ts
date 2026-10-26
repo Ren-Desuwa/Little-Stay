@@ -1,9 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { z } from 'zod';
 import { seedData, photos, propertyPhotos } from '../src/lib/seed';
 import { today, addDays } from '../src/lib/model';
+import { AUTH_SCHEMA } from './auth-schema';
 
 export function hashPassword(password: string) {
   const salt = randomBytes(16).toString('hex');
@@ -14,20 +16,7 @@ export function verifyPassword(password: string, hash: string) {
   const [salt, key] = hash.split(':');
   return timingSafeEqual(scryptSync(password, salt, 64), Buffer.from(key, 'hex'));
 }
-export function openDatabase(path: string) {
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
-  db.exec(
-    'PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA trusted_schema=OFF;',
-  );
-  const version = Number((db.prepare('PRAGMA user_version').get() as any).user_version);
-  if (version > 3) {
-    db.close();
-    throw new Error('This database uses a newer schema. Update the application before opening it.');
-  }
-  if (version < 1)
-    transaction(db, () =>
-      db.exec(`
+export const INITIAL_SCHEMA = `
     CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('guest','host','admin')),host_status TEXT NOT NULL CHECK(host_status IN ('pending','approved','rejected')),suspended INTEGER NOT NULL DEFAULT 0,bio TEXT NOT NULL DEFAULT '');
     CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL);
@@ -42,8 +31,20 @@ export function openDatabase(path: string) {
     CREATE TABLE IF NOT EXISTS reviews(id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE REFERENCES reservations(id),property_id TEXT NOT NULL REFERENCES properties(id),guest_id TEXT NOT NULL REFERENCES users(id),rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),body TEXT NOT NULL,hidden INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,actor_id TEXT NOT NULL REFERENCES users(id),action TEXT NOT NULL,target_id TEXT NOT NULL,created_at TEXT NOT NULL);
     INSERT OR IGNORE INTO migrations VALUES(1,datetime('now'));
-    PRAGMA user_version=1;`),
-    );
+    PRAGMA user_version=1;`;
+
+export function openDatabase(path: string) {
+  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+  const db = new DatabaseSync(path);
+  db.exec(
+    'PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA trusted_schema=OFF;',
+  );
+  const version = Number((db.prepare('PRAGMA user_version').get() as any).user_version);
+  if (version > 4) {
+    db.close();
+    throw new Error('This database uses a newer schema. Update the application before opening it.');
+  }
+  if (version < 1) transaction(db, () => db.exec(INITIAL_SCHEMA));
   if (version < 2)
     transaction(db, () => {
       // Retain historical bookings and related records; retire only surplus generated listings.
@@ -79,6 +80,11 @@ export function openDatabase(path: string) {
       }
       db.exec("INSERT OR IGNORE INTO migrations VALUES(3,datetime('now')); PRAGMA user_version=3;");
     });
+  if (version < 4)
+    transaction(db, () => {
+      db.exec(AUTH_SCHEMA);
+      db.exec("INSERT OR IGNORE INTO migrations VALUES(4,datetime('now')); PRAGMA user_version=4;");
+    });
   return db;
 }
 export function transaction<T>(db: DatabaseSync, work: () => T): T {
@@ -93,6 +99,7 @@ export function transaction<T>(db: DatabaseSync, work: () => T): T {
   }
 }
 export function seedDatabase(db: DatabaseSync) {
+  if (process.env.NODE_ENV === 'production' && process.env.LITTLE_STAY_SEED !== 'demo') return;
   if ((db.prepare('SELECT COUNT(*) AS n FROM users').get() as any).n) return;
   transaction(db, () => {
     const base = seedData();
@@ -193,6 +200,39 @@ export function seedDatabase(db: DatabaseSync) {
     );
   });
 }
+export function ensureAdmin(db: DatabaseSync) {
+  if (process.env.NODE_ENV === 'production' && process.env.LITTLE_STAY_SEED !== 'demo') {
+    // An old local database must not silently publish known demo credentials.
+    const demos = db
+      .prepare("SELECT password_hash FROM users WHERE email LIKE '%@littlestay.local'")
+      .all() as any[];
+    if (demos.some((u) => verifyPassword('LittleStay123!', u.password_hash)))
+      throw new Error(
+        'Demo passwords found. Use a fresh production data directory or change all demo passwords.',
+      );
+  }
+  if (db.prepare("SELECT id FROM users WHERE role='admin' AND suspended=0").get()) return;
+  const { ADMIN_EMAIL: email, ADMIN_PASSWORD: password } = process.env;
+  if (email && password) {
+    const credentials = z
+      .object({ email: z.email().max(254), password: z.string().min(8).max(128) })
+      .parse({ email: email.trim().toLowerCase(), password });
+    db.prepare('INSERT INTO users VALUES(?,?,?,?,?,?,?,?)').run(
+      randomUUID(),
+      'Administrator',
+      credentials.email,
+      hashPassword(credentials.password),
+      'admin',
+      'approved',
+      0,
+      '',
+    );
+  } else if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'Set ADMIN_EMAIL and ADMIN_PASSWORD to create the first production administrator.',
+    );
+  }
+}
 export function propertyFromRow(row: any) {
   return {
     ...JSON.parse(row.details),
@@ -218,6 +258,7 @@ export function userFromRow(row: any) {
     hostStatus: row.host_status,
     suspended: !!row.suspended,
     bio: row.bio,
+    passwordLogin: !!row.password_hash,
   };
 }
 export function reservationFromRow(r: any) {

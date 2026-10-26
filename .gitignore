@@ -6,3 +6,7 @@ dist/
 *.sqlite-shm
 *.sqlite-wal
 little-stay-backup-*.json
+.env
+.env.*
+!.env.example
+.vercel/

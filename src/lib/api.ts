@@ -37,7 +37,7 @@ export async function request<T = { ok: boolean; id?: string }>(
   try {
     value = await response.json();
   } catch {
-    throw new Error('The local server did not return a valid response.');
+    throw new Error('The server did not return a valid response.');
   }
   if (!response.ok) {
     const error = value && typeof value === 'object' && 'error' in value ? value.error : null;
@@ -62,11 +62,24 @@ export async function getState() {
         typeof data.currentUser.name !== 'string' ||
         !['guest', 'host', 'admin'].includes(data.currentUser.role)))
   )
-    throw new Error('The local server returned invalid application data.');
+    throw new Error('The server returned invalid application data.');
   stateOrder.set(data, order);
   return data;
 }
 export async function change(path: string, body?: unknown, method = 'POST') {
   await request(path, method, body);
   return getState();
+}
+export async function uploadPhotos(files: File[]) {
+  if (!files.length || files.length > 8) throw new Error('Choose one to eight photos.');
+  if (files.some((file) => file.size > 4 * 1024 * 1024))
+    throw new Error('Each photo must be 4 MB or smaller.');
+  const images: string[] = [];
+  // Keep each multipart request below Vercel's 4.5 MB function payload limit.
+  for (const file of files) {
+    const form = new FormData();
+    form.append('photos', file);
+    images.push(...(await request<{ images: string[] }>('/uploads', 'POST', form)).images);
+  }
+  return images;
 }

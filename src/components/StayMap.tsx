@@ -84,11 +84,15 @@ export default function StayMap({
       instance.setView([properties[0].lat, properties[0].lng], 14);
     map.current = instance;
     instance.on('zoomend', () => setZoom(instance.getZoom()));
-    const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      maxZoom: 19,
-    });
+    const tiles = L.tileLayer(
+      import.meta.env.VITE_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      {
+        attribution:
+          import.meta.env.VITE_TILE_ATTRIBUTION ||
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19,
+      },
+    );
     let tileBatchFailed = false;
     tiles.on('loading', () => {
       tileBatchFailed = false;
@@ -365,7 +369,7 @@ export default function StayMap({
             : 'Street tiles unavailable. Pins and geometry still work; internet is needed for streets.'}
         </div>
       )}
-      <span className="map-area">{region.mapLabel} · DEMO AREA</span>
+      <span className="map-area">{region.mapLabel} · SEARCH AREA</span>
     </div>
   );
 }

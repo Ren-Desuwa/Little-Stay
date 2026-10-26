@@ -12,6 +12,7 @@ import {
   toggleSuspension,
   today,
   validateDates,
+  validateBookingDates,
   validDate,
   type Filters,
 } from './model';
@@ -35,6 +36,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe('reservation rules', () => {
+  it('permits the booking boundaries and rejects oversized stays or distant check-in', () => {
+    expect(() => validateBookingDates(addDays(now, 365), addDays(now, 395), now)).not.toThrow();
+    expect(() => validateBookingDates(now, addDays(now, 31), now)).toThrow(/30 nights/);
+    expect(() => validateBookingDates(addDays(now, 366), addDays(now, 367), now)).toThrow(
+      /365 days/,
+    );
+    expect(() => validateDates('2020-01-01', '2021-01-01', '0000-01-01')).not.toThrow();
+    expect(() =>
+      createBooking(
+        fresh(),
+        fresh().users[0],
+        { ...booking, checkIn: now, checkOut: addDays(now, 31) },
+        now,
+      ),
+    ).toThrow(/30 nights/);
+  });
   it('creates a booking with a reference index and immutable booked rate', () => {
     const d = fresh();
     const next = createBooking(d, d.users[0], booking, now);

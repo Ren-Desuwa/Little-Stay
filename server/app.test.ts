@@ -1,5 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import supertest from 'supertest';
+import type { DatabaseSync } from 'node:sqlite';
+import sharp from 'sharp';
 import { mkdtempSync, rmSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,7 +14,7 @@ vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
   return { ...actual, writeFileSync: vi.fn(actual.writeFileSync) };
 });
-let runtime: ReturnType<typeof createApplication>, directory: string;
+let runtime: ReturnType<typeof createApplication<DatabaseSync>>, directory: string;
 const appHeader = { 'X-Little-Stay': '1', Origin: 'http://127.0.0.1:5173' };
 const password = 'LittleStay123!';
 beforeEach(() => {
@@ -25,6 +27,7 @@ beforeEach(() => {
 afterEach(() => {
   runtime?.close();
   rmSync(directory, { recursive: true, force: true });
+  vi.unstubAllEnvs();
 });
 async function login(email = 'alex') {
   const agent = supertest.agent(runtime.app);
@@ -54,11 +57,175 @@ function listing() {
 }
 
 describe('full local API', () => {
+  function reopen() {
+    runtime.close();
+    runtime = createApplication({
+      databasePath: join(directory, 'test.sqlite'),
+      uploadsPath: join(directory, 'uploads'),
+    });
+  }
+  it('accepts exact configured website origins while rejecting lookalikes and missing headers', async () => {
+    vi.stubEnv('PUBLIC_ORIGIN', 'https://stay.example,https://preview.example:8443');
+    reopen();
+    for (const origin of ['https://stay.example', 'https://preview.example:8443'])
+      await supertest(runtime.app)
+        .post('/api/auth/login')
+        .set({ ...appHeader, Origin: origin })
+        .send({ email: 'alex@littlestay.local', password })
+        .expect(200);
+    for (const origin of [
+      'http://stay.example',
+      'https://stay.example:444',
+      'https://stay.example.evil.test',
+      'https://stay.example/',
+    ])
+      await supertest(runtime.app)
+        .post('/api/auth/login')
+        .set({ ...appHeader, Origin: origin })
+        .send({})
+        .expect(403);
+    await supertest(runtime.app)
+      .post('/api/auth/login')
+      .set('Origin', 'https://stay.example')
+      .send({})
+      .expect(403);
+  });
+  it('sets matching secure production cookie options when signing in and out', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('LITTLE_STAY_SEED', 'demo');
+    reopen();
+    const signedIn = await supertest(runtime.app)
+      .post('/api/auth/login')
+      .set(appHeader)
+      .send({ email: 'alex@littlestay.local', password })
+      .expect(200);
+    const cookie = signedIn.headers['set-cookie'][0];
+    const signedOut = await supertest(runtime.app)
+      .post('/api/auth/logout')
+      .set(appHeader)
+      .set('Cookie', cookie.split(';')[0])
+      .expect(200);
+    for (const value of [cookie, signedOut.headers['set-cookie'][0]]) {
+      expect(value).toContain('HttpOnly');
+      expect(value).toContain('Secure');
+      expect(value).toContain('SameSite=Strict');
+    }
+    expect(runtime.db.prepare('SELECT COUNT(*) AS n FROM sessions').get()!.n).toBe(0);
+  });
+  it('keeps login limits per forwarded visitor only when proxy trust is enabled', async () => {
+    vi.stubEnv('TRUST_PROXY', '1');
+    reopen();
+    for (let i = 0; i < 6; i++)
+      await supertest(runtime.app)
+        .post('/api/auth/login')
+        .set(appHeader)
+        .set('X-Forwarded-For', '192.0.2.10')
+        .send({ email: 'alex@littlestay.local', password: 'wrong' })
+        .expect(401);
+    await supertest(runtime.app)
+      .post('/api/auth/login')
+      .set(appHeader)
+      .set('X-Forwarded-For', '192.0.2.10')
+      .send({ email: 'alex@littlestay.local', password })
+      .expect(429);
+    await supertest(runtime.app)
+      .post('/api/auth/login')
+      .set(appHeader)
+      .set('X-Forwarded-For', '192.0.2.11')
+      .send({ email: 'alex@littlestay.local', password })
+      .expect(200);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 16 * 60_000);
+    try {
+      await supertest(runtime.app)
+        .post('/api/auth/login')
+        .set(appHeader)
+        .set('X-Forwarded-For', '192.0.2.10')
+        .send({ email: 'alex@littlestay.local', password })
+        .expect(200);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  it('limits bookings and host blocks without restricting historical report ranges', async () => {
+    const guest = await login();
+    const host = await login('isabel');
+    for (const [start, end] of [
+      [90, 121],
+      [400, 401],
+    ]) {
+      await guest
+        .post('/api/bookings')
+        .set(appHeader)
+        .send({ ...input('stay-010', start), checkOut: addDays(today(), end) })
+        .expect(400);
+      await host
+        .post('/api/properties/stay-001/block')
+        .set(appHeader)
+        .send({ start: addDays(today(), start), end: addDays(today(), end), reason: 'Maintenance' })
+        .expect(400);
+    }
+    await guest
+      .post('/api/bookings')
+      .set(appHeader)
+      .send({ ...input('stay-010', 90), checkOut: addDays(today(), 120) })
+      .expect(201);
+    await host
+      .post('/api/properties/stay-001/block')
+      .set(appHeader)
+      .send({ start: addDays(today(), 365), end: addDays(today(), 395), reason: 'Maintenance' })
+      .expect(201);
+    await host.get('/api/reports?start=2020-01-01&end=2021-01-01').expect(200);
+  });
+  it('lets only admins reset non-admin passwords and revokes every target session', async () => {
+    const guest = await login(),
+      other = await login(),
+      host = await login('isabel');
+    const path = '/api/admin/users/guest-1/password';
+    const body = { temporaryPassword: 'TemporarySecret123!' };
+    await supertest(runtime.app).post(path).set(appHeader).send(body).expect(401);
+    await guest.post(path).set(appHeader).send(body).expect(403);
+    await host.post(path).set(appHeader).send(body).expect(403);
+    const admin = await login('admin');
+    await admin.post(path).set(appHeader).send({ temporaryPassword: 'short' }).expect(400);
+    await admin.post('/api/admin/users/admin-1/password').set(appHeader).send(body).expect(403);
+    await admin.post(path).set(appHeader).send(body).expect(200);
+    expect((await state(guest)).currentUser).toBeNull();
+    expect((await state(other)).currentUser).toBeNull();
+    await supertest(runtime.app)
+      .post('/api/auth/login')
+      .set(appHeader)
+      .send({ email: 'alex@littlestay.local', password })
+      .expect(401);
+    await supertest(runtime.app)
+      .post('/api/auth/login')
+      .set(appHeader)
+      .send({ email: 'alex@littlestay.local', password: body.temporaryPassword })
+      .expect(200);
+    expect(JSON.stringify(await state(admin))).not.toContain(body.temporaryPassword);
+  });
   it('sets the standard referrer policy needed to identify web map tile requests', async () => {
     await supertest(runtime.app)
       .get('/api/health')
       .expect('Referrer-Policy', 'strict-origin-when-cross-origin')
       .expect(200);
+  });
+  it('accepts authenticated deletion requests and alerts admins without exposing private emails to visitors', async () => {
+    await supertest(runtime.app).post('/api/profile/deletion-request').set(appHeader).expect(401);
+    const guest = await login();
+    await guest.post('/api/profile/deletion-request').set(appHeader).expect(200);
+    const admin = await login('admin');
+    const data = await state(admin);
+    expect(
+      data.notifications.some(
+        (n: any) => n.body.includes('alex@littlestay.local') && n.body.includes('deletion'),
+      ),
+    ).toBe(true);
+    expect(
+      data.audit.some(
+        (a: any) => a.action === 'account.deletion-request' && a.targetId === 'guest-1',
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(await state())).not.toContain('alex@littlestay.local');
   });
   it('seeds 50 dense, geographically valid listings without leaking credentials or reservations', async () => {
     const d = await state();
@@ -490,6 +657,7 @@ describe('full local API', () => {
     const uploaded = (
       await host.post('/api/uploads').set(appHeader).attach('photos', image, 'room.jpg').expect(201)
     ).body.images[0];
+    const installedImage = readFileSync(join(directory, uploaded));
     const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
@@ -502,7 +670,7 @@ describe('full local API', () => {
         .set(appHeader)
         .attach('photos', image, 'room.jpg')
         .expect(500);
-      expect(readFileSync(join(directory, uploaded))).toEqual(image);
+      expect(readFileSync(join(directory, uploaded))).toEqual(installedImage);
       expect(readdirSync(join(directory, 'uploads'))).toEqual([uploaded.slice('/uploads/'.length)]);
     } finally {
       logged.mockRestore();
@@ -526,6 +694,41 @@ describe('full local API', () => {
       .set(appHeader)
       .send({ email: 'alex@littlestay.local', password: 'a'.repeat(1024 * 1024) })
       .expect(413);
+  });
+  it('rejects forged image signatures and invalid batches without installing files', async () => {
+    const host = await login('isabel');
+    await host
+      .post('/api/uploads')
+      .set(appHeader)
+      .attach('photos', readFileSync('public/images/apartment-1.jpg'), 'good.jpg')
+      .attach('photos', Buffer.from([255, 216, 255, 0, 0]), 'forged.jpg')
+      .expect(400);
+    expect(readdirSync(join(directory, 'uploads'))).toEqual([]);
+  });
+  it('decodes and resizes photos, strips metadata, and serves real JPEG, PNG, and WebP output', async () => {
+    const host = await login('isabel');
+    for (const format of ['jpeg', 'png', 'webp'] as const) {
+      const original = await sharp({
+        create: { width: 2400, height: 1200, channels: 3, background: '#446688' },
+      })
+        .withExif({ IFD0: { Artist: 'Private owner', Copyright: 'Private location' } })
+        .toFormat(format)
+        .toBuffer();
+      const result = await host
+        .post('/api/uploads')
+        .set(appHeader)
+        .attach('photos', original, `room.${format}`)
+        .expect(201);
+      const saved = readFileSync(join(directory, result.body.images[0]));
+      const metadata = await sharp(saved).metadata();
+      expect(metadata.format).toBe(format);
+      expect(metadata.width).toBe(2048);
+      expect(metadata.height).toBe(1024);
+      expect(metadata.exif).toBeUndefined();
+      expect(metadata.xmp).toBeUndefined();
+      expect(metadata.icc).toBeUndefined();
+      expect(saved.equals(original)).toBe(false);
+    }
   });
   it('reports occupancy with clipped dates and exports scoped CSV', async () => {
     const admin = await login('admin'),
@@ -566,7 +769,7 @@ describe('full local API', () => {
   });
   it('returns the actual schema version and treats malformed stored password hashes as invalid credentials', async () => {
     expect((await supertest(runtime.app).get('/api/health').expect(200)).body.schemaVersion).toBe(
-      3,
+      4,
     );
     runtime.db
       .prepare("UPDATE users SET password_hash=? WHERE id='guest-1'")

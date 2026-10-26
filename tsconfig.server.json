@@ -4,5 +4,5 @@
     "types": ["node"],
     "allowImportingTsExtensions": true
   },
-  "include": ["server/**/*.ts", "src/lib/**/*.ts"]
+  "include": ["server/**/*.ts", "src/lib/**/*.ts", "api/**/*.ts"]
 }

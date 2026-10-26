@@ -9,6 +9,7 @@ export type User = {
   bio?: string;
   hostStatus?: 'pending' | 'approved' | 'rejected';
   suspended?: boolean;
+  passwordLogin?: boolean;
 };
 export type CalendarEntry = {
   id: string;
@@ -103,6 +104,7 @@ export type Reservation = {
 };
 export type Data = {
   version: 1;
+  demo?: boolean;
   users: User[];
   properties: Property[];
   reservations: Reservation[];
@@ -151,6 +153,15 @@ export function validateDates(start: string, end: string, now = today()) {
     throw new Error('Choose valid check-in and checkout dates.');
   if (start < now) throw new Error('Check-in cannot be in the past.');
   if (end <= start) throw new Error('Checkout must be after check-in.');
+}
+export const MAX_STAY_NIGHTS = 30;
+export const MAX_BOOKING_ADVANCE_DAYS = 365;
+export function validateBookingDates(start: string, end: string, now = today()) {
+  validateDates(start, end, now);
+  if (nights(start, end) > MAX_STAY_NIGHTS)
+    throw new Error('Stays and date blocks are limited to 30 nights.');
+  if (start > addDays(now, MAX_BOOKING_ADVANCE_DAYS))
+    throw new Error('Check-in must be within 365 days from today.');
 }
 export function available(
   propertyId: string,
@@ -204,7 +215,7 @@ export function createBooking(
   const property = buildIndexes(data).properties.get(input.propertyId);
   if (!property || !bookableProperty(data, property))
     throw new Error('This property is no longer available for booking.');
-  validateDates(input.checkIn, input.checkOut, now);
+  validateBookingDates(input.checkIn, input.checkOut, now);
   if (!Number.isInteger(input.guests) || input.guests < 1 || input.guests > property.capacity)
     throw new Error(`Choose between 1 and ${property.capacity} guests.`);
   if (!available(property.id, input.checkIn, input.checkOut, data.reservations, data.calendar))

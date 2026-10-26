@@ -1,3 +1,17 @@
+# Vercel preparation verification · 2026-10-26
+
+- Google sign-in: 13 tests cover OAuth state, PKCE, nonce, token validation, explicit account linking, host approval, suspension, schema migration, and callbacks across libSQL runtimes. Google SDK responses are mocked; live Google login awaits OAuth credentials and deployment.
+- `npm test`: **152/152 passed**, covering every existing test plus production configuration, booking bounds, password reset/session revocation, re-encoded images, deletion requests, local/cloud backups, and cloud import/restore.
+- `npm run build`: frontend and backend TypeScript checks plus Vite production bundle passed.
+- `npm audit`: **0 vulnerabilities**. Vercel Blob is pinned to 2.4.0 because the newer SDK pulled in an advisory-bearing CLI dependency; the public-photo APIs used here are covered by adapter/integration tests.
+- Real libSQL client tests use two independent connections and app instances against a local database: concurrent bookings yield one 201 and one 409, sessions/logout cross instances, rollback isolates failures, and login limits persist across instances. These tests do not contact a live Turso service.
+- Blob storage is mocked for integration and cloud backup/restore tests. Local browser verification under production CSP confirmed login/logout, removal of the password helper, booking input bounds, local photo upload/preview, loaded OpenStreetMap tile images, and the privacy page, with no console errors/warnings observed in those flows.
+- No services were provisioned and no live Vercel deployment was performed. Cloud upload/download, HTTPS cookies on the final domain, function routing, and real provider connectivity still need the launch checks in README after credentials are configured. Optional tasks 17–19 (email, live updates, pagination) remain open.
+
+The earlier local-app walkthrough below is historical; the Vercel setup is documented in README.
+
+---
+
 # Full implementation verification
 
 ## Current implementation — October 25, 2026

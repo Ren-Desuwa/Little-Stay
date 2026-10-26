@@ -3113,6 +3113,25 @@ p.algorithm-complete {
   font-size: 12px;
   margin-bottom: 22px;
 }
+.google-sign-in {
+  margin: 16px 0;
+}
+.google-button {
+  width: 100%;
+  justify-content: center;
+  background: white;
+  gap: 12px;
+}
+.auth-divider {
+  text-align: center;
+  font-size: 12px;
+  margin-top: 16px;
+}
+.google-role {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
 .sample-accounts {
   margin-top: 23px;
   padding: 15px;

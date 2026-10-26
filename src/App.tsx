@@ -47,6 +47,7 @@ import AdminDashboardTabs, { type AdminDashboardSection } from './components/Adm
 import { locateCell, project, voronoi } from './lib/algorithms';
 import {
   amenities,
+  addDays,
   available,
   buildIndexes,
   findProperties,
@@ -54,13 +55,15 @@ import {
   nights,
   today,
   validateDates,
+  validateBookingDates,
   type Data,
   type Filters,
   type Property,
   type User,
 } from './lib/model';
 import { photos } from './lib/seed';
-import { emptyData, getState, getStateOrder, change, request } from './lib/api';
+import { googleErrors } from './components/GoogleSignIn';
+import { emptyData, getState, getStateOrder, change, request, uploadPhotos } from './lib/api';
 import {
   AuthModal,
   AccountPage,
@@ -104,6 +107,17 @@ function App() {
   const [authOpen, setAuthOpen] = useState(false),
     [loading, setLoading] = useState(true),
     [connectionError, setConnectionError] = useState('');
+  const [authError, setAuthError] = useState('');
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const reason = url.searchParams.get('auth_error');
+    if (reason) {
+      setAuthError(googleErrors[reason] ?? googleErrors.failed);
+      setAuthOpen(true);
+      url.searchParams.delete('auth_error');
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    }
+  }, []);
   const [page, setPage] = useState(() => window.location.hash.slice(1) || 'explore');
   const [adminTab, setAdminTab] = useState<AdminDashboardSection>('listings');
   const [navHidden, setNavHidden] = useState(false);
@@ -374,7 +388,11 @@ function App() {
           )}
         </nav>
         <div className="account full-account">
-          <span className="demo-pill">LOCAL · SQL</span>
+          {(import.meta.env.DEV || data.demo) && (
+            <span className="demo-pill">
+              {data.demo ? 'DEMO · FICTIONAL STAYS' : 'LOCAL · SQL'}
+            </span>
+          )}
           {loggedIn ? (
             <>
               <button
@@ -433,7 +451,7 @@ function App() {
       <main>
         {loading && (
           <p className="connection-notice" role="status">
-            Loading local listings…
+            Loading listings…
           </p>
         )}
         {connectionError && (
@@ -819,7 +837,7 @@ function App() {
                           <MapPin size={32} />
                           <h3>Your next stay is a pin away.</h3>
                           <p>
-                            Choose a property marker for details, or click inside the demo area to
+                            Choose a property marker for details, or click inside the map area to
                             find your nearest matching stay.
                           </p>
                         </>
@@ -1151,6 +1169,68 @@ function App() {
         {loggedIn && user.role !== 'guest' && page === 'reports' && (
           <ReportsPage key={`reports-${user.id}`} {...fullProps} />
         )}
+        {page === 'privacy' && (
+          <section className="page-section">
+            <div className="eyebrow">PRIVACY &amp; TERMS</div>
+            <h1>Your account and your stays.</h1>
+            <div className="lab-panel stack-form">
+              <h2>What we store</h2>
+              <p>
+                Little Stay stores your name, email, password hash, profile, bookings, saved stays,
+                messages, reviews, notifications, and account activity. Hosts provide listing
+                details, photos, and private check-in instructions. Session cookies keep you signed
+                in for up to eight hours.
+              </p>
+              <h2>Who can see it</h2>
+              <p>
+                Listing information and published reviews are public. Booking details are available
+                to the guest, responsible host, and administrators. Messages are shared with the
+                participants. Hosts and guests receive check-in instructions when authorized.
+                Uploaded photos are publicly accessible; avoid including private information.
+              </p>
+              <h2>Maps and service providers</h2>
+              <p>
+                Map tiles come from the configured map provider, which receives your IP address and
+                tile requests. Hosting providers process requests and maintain service logs. Little
+                Stay does not process payments.
+              </p>
+              <h2>Access and deletion requests</h2>
+              <p>
+                Sign in and use the button below to request account deletion from the
+                administrators. You can update your profile in Account. For other access or
+                correction requests, use the contact details supplied with your booking or
+                invitation. The operator must verify account ownership and explain any booking
+                records that need to be retained. Deleted information may remain in backups until
+                those backups expire.
+              </p>
+              {loggedIn ? (
+                <button
+                  className="outline"
+                  onClick={() =>
+                    perform(
+                      () => change('/profile/deletion-request'),
+                      'Deletion request sent to the administrators.',
+                    )
+                  }
+                >
+                  Request account deletion
+                </button>
+              ) : (
+                <button className="outline" onClick={() => setAuthOpen(true)}>
+                  Sign in to request deletion
+                </button>
+              )}
+              <h2>Using Little Stay</h2>
+              <p>
+                Keep account information accurate, protect your password, and share only photos and
+                content you have permission to use. Confirm listing details, house rules,
+                availability, and cancellation arrangements with the host before travel. A booking
+                confirmation does not collect payment. Listings marked as demo are fictional and are
+                not rental offers.
+              </p>
+            </div>
+          </section>
+        )}
         {!loggedIn &&
           ['dashboard', 'profile', 'messages', 'notifications', 'reports'].includes(page) && (
             <div className="empty-state">
@@ -1168,6 +1248,7 @@ function App() {
           'messages',
           'notifications',
           'reports',
+          'privacy',
         ].includes(page) && (
           <div className="empty-state">
             <h1>That page wandered off.</h1>
@@ -1183,9 +1264,12 @@ function App() {
         </a>
         <span>Made for little escapes. Built with a little algorithm magic.</span>
         <div>
-          <span className="footer-demo">
-            <span /> Fictional seed listings · Local database
-          </span>
+          {(import.meta.env.DEV || data.demo) && (
+            <span className="footer-demo">
+              <span /> Fictional seed listings · Local database
+            </span>
+          )}
+          <a href="#privacy">Privacy &amp; terms</a>
         </div>
       </footer>
       {detailProperty && (
@@ -1272,7 +1356,11 @@ function App() {
       )}
       {authOpen && (
         <AuthModal
-          onClose={() => setAuthOpen(false)}
+          initialError={authError}
+          onClose={() => {
+            setAuthOpen(false);
+            setAuthError('');
+          }}
           onData={(next) => {
             setData(next);
             setNotice(`Signed in as ${next.currentUser?.name}.`);
@@ -1488,6 +1576,7 @@ function BookingModal({
     setError('');
     setBusy(true);
     try {
+      validateBookingDates(checkIn, checkOut);
       await onBook({ propertyId: p.id, checkIn, checkOut, guests });
     } catch (e) {
       setError((e as Error).message);
@@ -1573,7 +1662,7 @@ function BookingModal({
             <h3>
               {money(p.price)} <small>/ night</small>
             </h3>
-            <p>No hidden fees. Just your little stay.</p>
+            <p>Stay up to 30 nights. Check in within 365 days from today.</p>
             <label>
               Check-in
               <input
@@ -1581,6 +1670,7 @@ function BookingModal({
                 aria-label="Booking check-in"
                 required
                 min={today()}
+                max={addDays(today(), 365)}
                 value={checkIn}
                 onChange={(e) => setIn(e.target.value)}
               />
@@ -1591,7 +1681,8 @@ function BookingModal({
                 type="date"
                 aria-label="Booking checkout"
                 required
-                min={checkIn || today()}
+                min={addDays(checkIn || today(), 1)}
+                max={addDays(checkIn || addDays(today(), 365), 30)}
                 value={checkOut}
                 onChange={(e) => setOut(e.target.value)}
               />
@@ -1884,11 +1975,9 @@ function PropertyEditor({
               setUploading(true);
               setError('');
               try {
-                const form = new FormData();
-                files.forEach((f) => form.append('photos', f));
-                const result = await request<{ images: string[] }>('/uploads', 'POST', form);
-                field('images', result.images);
-                field('image', result.images[0]);
+                const images = await uploadPhotos(files);
+                field('images', images);
+                field('image', images[0]);
               } catch (e) {
                 setError((e as Error).message);
               } finally {

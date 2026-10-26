@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Bell, Check, Download, MessageCircle, Send, Star } from 'lucide-react';
 import Modal from './Modal';
+import GoogleSignIn from './GoogleSignIn';
 import { change, getState, request } from '../lib/api';
 import {
   addDays,
@@ -48,9 +49,11 @@ function ErrorText({ text }: { text: string }) {
 export function AuthModal({
   onClose,
   onData,
+  initialError = '',
 }: {
   onClose: () => void;
   onData: (data: Data) => void;
+  initialError?: string;
 }) {
   const [register, setRegister] = useState(false),
     [email, setEmail] = useState(''),
@@ -58,7 +61,7 @@ export function AuthModal({
     [name, setName] = useState(''),
     [role, setRole] = useState('guest'),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
+    [error, setError] = useState(initialError);
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
@@ -82,9 +85,19 @@ export function AuthModal({
     <Modal title={register ? 'Make room for a little more.' : 'Welcome back.'} onClose={onClose}>
       <p className="auth-intro">
         {register
-          ? 'Create your local account. Host applications are reviewed by an administrator.'
+          ? 'Create your account. Host applications are reviewed by an administrator.'
           : 'Sign in to book, host, and manage your stays.'}
       </p>
+      {register && (
+        <label className="google-role">
+          Account type
+          <select value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="guest">Guest · find and book stays</option>
+            <option value="host">Host · apply to list properties</option>
+          </select>
+        </label>
+      )}
+      <GoogleSignIn role={register ? role : 'guest'} onError={setError} />
       <form className="stack-form" onSubmit={submit}>
         {register && (
           <label>
@@ -114,15 +127,6 @@ export function AuthModal({
             onChange={(e) => setPassword(e.target.value)}
           />
         </label>
-        {register && (
-          <label>
-            Account type
-            <select value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="guest">Guest · find and book stays</option>
-              <option value="host">Host · apply to list properties</option>
-            </select>
-          </label>
-        )}
         <ErrorText text={error} />
         <button className="primary" disabled={busy}>
           {busy ? 'Please wait…' : register ? 'Create account' : 'Sign in'} <Check size={16} />
@@ -137,7 +141,7 @@ export function AuthModal({
       >
         {register ? 'Already have an account? Sign in' : 'New here? Create an account'}
       </button>
-      {!register && (
+      {import.meta.env.DEV && !register && (
         <details className="sample-accounts">
           <summary>Seeded accounts for local testing</summary>
           <p>
@@ -176,6 +180,7 @@ export function AccountPage(props: Props) {
     [bio, setBio] = useState(user.bio ?? ''),
     [old, setOld] = useState(''),
     [password, setPassword] = useState('');
+  const [googleError, setGoogleError] = useState('');
   return (
     <section className="page-section">
       <div className="eyebrow">YOUR ACCOUNT</div>
@@ -213,6 +218,8 @@ export function AccountPage(props: Props) {
           <button className="primary" disabled={busy}>
             Save profile
           </button>
+          <GoogleSignIn link onError={setGoogleError} />
+          <ErrorText text={googleError} />
         </form>
         <form
           className="lab-panel stack-form"
@@ -232,12 +239,19 @@ export function AccountPage(props: Props) {
           }}
         >
           <h2>Change password</h2>
+          {user.passwordLogin === false && (
+            <p>
+              This account uses Google sign-in. An administrator can set a password if you need
+              email/password access.
+            </p>
+          )}
           <label>
             Current password
             <input
               type="password"
               required
               autoComplete="current-password"
+              disabled={user.passwordLogin === false}
               value={old}
               onChange={(e) => setOld(e.target.value)}
             />
@@ -250,11 +264,12 @@ export function AccountPage(props: Props) {
               minLength={8}
               maxLength={128}
               autoComplete="new-password"
+              disabled={user.passwordLogin === false}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
           </label>
-          <button className="primary" disabled={busy}>
+          <button className="primary" disabled={busy || user.passwordLogin === false}>
             Change password
           </button>
         </form>
@@ -424,7 +439,9 @@ export function HostTools(props: Props) {
   return (
     <section className="dashboard-tools">
       <h2>Availability blocks</h2>
-      <p>Block nights for maintenance or personal use. Existing reservations cannot be blocked.</p>
+      <p>
+        Block up to 30 nights, starting within 365 days. Existing reservations cannot be blocked.
+      </p>
       {user.hostStatus !== 'approved' ? (
         <p className="field-error">
           Your host application is {user.hostStatus}. An administrator must approve it before you
@@ -460,6 +477,7 @@ export function HostTools(props: Props) {
               <input
                 type="date"
                 min={today()}
+                max={addDays(today(), 365)}
                 required
                 value={start}
                 onChange={(e) => setStart(e.target.value)}
@@ -469,7 +487,8 @@ export function HostTools(props: Props) {
               Until (exclusive)
               <input
                 type="date"
-                min={start || today()}
+                min={addDays(start || today(), 1)}
+                max={addDays(start || addDays(today(), 365), 30)}
                 required
                 value={end}
                 onChange={(e) => setEnd(e.target.value)}
@@ -518,6 +537,8 @@ export function HostTools(props: Props) {
 export function AdminTools(props: Props & { section: 'accounts' | 'reviews' | 'activity' }) {
   const { data } = props,
     { run, error, busy } = useAction(props);
+  const [resetUser, setResetUser] = useState<User | null>(null);
+  const [temporaryPassword, setTemporaryPassword] = useState('');
   return (
     <section className="dashboard-tools">
       {props.section === 'accounts' && (
@@ -585,6 +606,16 @@ export function AdminTools(props: Props & { section: 'accounts' | 'reviews' | 'a
                           <button
                             className="outline small"
                             disabled={busy}
+                            onClick={() => {
+                              setResetUser(u);
+                              setTemporaryPassword('');
+                            }}
+                          >
+                            Reset password
+                          </button>
+                          <button
+                            className="outline small"
+                            disabled={busy}
                             onClick={() =>
                               void run(
                                 `/admin/users/${u.id}`,
@@ -604,6 +635,52 @@ export function AdminTools(props: Props & { section: 'accounts' | 'reviews' | 'a
               </tbody>
             </table>
           </div>
+          {resetUser && (
+            <Modal
+              title={`Reset password for ${resetUser.name}`}
+              onClose={() => setResetUser(null)}
+            >
+              <p>
+                Verify the account owner's identity before resetting. Share the temporary password
+                privately and ask them to change it in Profile. All their sessions will be signed
+                out.
+              </p>
+              <form
+                className="stack-form"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (
+                    await run(
+                      `/admin/users/${resetUser.id}/password`,
+                      { temporaryPassword },
+                      'POST',
+                      'Password reset. All sessions signed out.',
+                    )
+                  ) {
+                    setTemporaryPassword('');
+                    setResetUser(null);
+                  }
+                }}
+              >
+                <label>
+                  Temporary password
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    maxLength={128}
+                    autoComplete="new-password"
+                    value={temporaryPassword}
+                    onChange={(e) => setTemporaryPassword(e.target.value)}
+                  />
+                </label>
+                <ErrorText text={error} />
+                <button className="primary" disabled={busy}>
+                  Reset password and sign out sessions
+                </button>
+              </form>
+            </Modal>
+          )}
         </>
       )}
       {props.section === 'reviews' && (
