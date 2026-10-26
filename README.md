@@ -79,6 +79,31 @@ For public traffic beyond a light demonstration, configure a suitable tile provi
 
 Vercel references: [Node.js functions](https://vercel.com/docs/functions/runtimes/node-js), [Blob SDK](https://vercel.com/docs/vercel-blob/using-blob-sdk), [function limits](https://vercel.com/docs/functions/limitations), [configuration](https://vercel.com/docs/project-configuration/vercel-ts). Turso: [TypeScript SDK](https://tursodatabase.github.io/libsql-client-ts/).
 
+### Voronoi demonstration dataset
+
+For the fictional course showcase, set both **Production** environment variables and redeploy:
+
+```dotenv
+LITTLE_STAY_SEED=demo
+LITTLE_STAY_DEMO_PROFILE=voronoi
+```
+
+On an empty listings database, this adds two guests and three approved hosts, alongside any existing administrator or unrelated accounts. The portfolio sizes are 3, 12, and 40 listings (55 total). Both guests have completed bookings and upcoming reservations relative to the initial seed date. Listings use bundled images, so loading this dataset does not require photo uploads.
+
+| Account | Email | Demonstration data |
+|---|---|---|
+| Alex · guest | alex@littlestay.local | Completed and upcoming stays |
+| Jamie · guest | jamie@littlestay.local | Completed and upcoming stays |
+| Isabel · host | isabel@littlestay.local | 3 listings |
+| Marco · host | marco@littlestay.local | 12 listings |
+| Clara · host | clara@littlestay.local | 40 listings |
+
+All five fictional accounts use `LittleStay123!`. Existing administrator credentials are preserved; no demo administrator is added by this profile. The site labels fictional listings as a demo. Keep these records separate from real guests and bookings.
+
+The import runs transactionally once and does not overwrite an occupied listings database. A persistent seed marker prevents re-creation after deletions; restarting or redeploying does not reset edited demo data. Keep demo mode enabled while these public demo passwords exist. Existing local seeds are not automatically uploaded or restored.
+
+Locations form a lightly jittered grid inside the North Caloocan search extent. This makes nearest-site cells legible without perfectly symmetric examples. They are illustrative locations, not verified rental addresses. Portfolio ownership is interleaved across the area; Voronoi geometry depends on the displayed listing sites, not host account counts. Real clustered data would produce more varied cell sizes.
+
 ### Google sign-in
 
 Google sign-in is optional and stays hidden until all three server settings below are configured. Email/password login continues working without them. The backend uses Google's authorization-code flow and verifies the ID token before creating an application session.

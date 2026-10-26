@@ -2,7 +2,7 @@
 
 Deployment target: the complete application on Vercel, with Turso/libSQL for durable records and Vercel Blob for photos. Local development retains SQLite and local uploads.
 
-Tasks 1–16 have been implemented and verified locally. All 154 tests and the production build pass; npm audit reports zero vulnerabilities. libSQL tests use independent connections to a local libSQL database; Blob operations in integration/backup tests are mocked. Live Turso/Blob/Vercel verification requires provisioned services and credentials. Task 8 is adapted to the requested all-Vercel deployment. Migration and local/cloud backup tooling are included. Tasks 17–19 remain optional follow-up work (email delivery, live updates, and pagination). Scheduling, backup retention, service provisioning, and live deployment remain operator setup. No services have been provisioned or deployed.
+Tasks 1–16 have been implemented and verified locally. All 155 tests and the production build pass; npm audit reports zero vulnerabilities. libSQL tests use independent connections to a local libSQL database; Blob operations in integration/backup tests are mocked. Live Turso/Blob/Vercel verification requires provisioned services and credentials. Task 8 is adapted to the requested all-Vercel deployment. Migration and local/cloud backup tooling are included. Tasks 17–19 remain optional follow-up work (email delivery, live updates, and pagination). Scheduling, backup retention, service provisioning, and live deployment remain operator setup. No services have been provisioned or deployed.
 
 ---
 

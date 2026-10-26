@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AUTH_SCHEMA } from './auth-schema.js';
+import { showcaseStatements } from './showcase.js';
 
 export class RemoteDatabase {
   private context = new AsyncLocalStorage<Transaction>();
@@ -117,6 +118,24 @@ export async function openRemoteDatabase(url: string, authToken?: string, bootst
         .run();
       if (!bootstrap) return;
       if (
+        process.env.LITTLE_STAY_SEED === 'demo' &&
+        process.env.LITTLE_STAY_DEMO_PROFILE === 'voronoi'
+      ) {
+        await db
+          .prepare(
+            'CREATE TABLE IF NOT EXISTS demo_seed_runs(profile TEXT PRIMARY KEY,created_at TEXT NOT NULL)',
+          )
+          .run();
+        if (
+          !(await db.prepare("SELECT profile FROM demo_seed_runs WHERE profile='voronoi'").get()) &&
+          !(await db.prepare('SELECT id FROM properties LIMIT 1').get())
+        ) {
+          await db.batch(showcaseStatements());
+          await db.prepare("INSERT INTO demo_seed_runs VALUES('voronoi',datetime('now'))").run();
+        }
+      }
+      if (
+        process.env.LITTLE_STAY_DEMO_PROFILE !== 'voronoi' &&
         !(await db.prepare('SELECT id FROM users LIMIT 1').get()) &&
         process.env.LITTLE_STAY_SEED === 'demo'
       ) {
