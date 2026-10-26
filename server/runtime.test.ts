@@ -29,7 +29,7 @@ it('loads the emitted API in native Node ESM without a TypeScript loader', () =>
     );
     expect(compilation.stdout + compilation.stderr).toBe('');
     expect(compilation.status).toBe(0);
-    const entry = pathToFileURL(join(output, 'api/[...path].js')).href;
+    const entry = pathToFileURL(join(output, 'api/index.js')).href;
     // Vitest/tsx resolve extensionless imports that the deployed Node ESM loader rejects.
     const execution = spawnSync(
       process.execPath,

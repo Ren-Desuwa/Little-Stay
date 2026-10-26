@@ -8,7 +8,10 @@ export function vercelConfig() {
     outputDirectory: 'dist',
     regions: ['sin1'],
     functions: { 'api/**/*.ts': { maxDuration: 30 } },
-    rewrites: [{ source: '/uploads/:path*', destination: '/api/uploads-file/:path*' }],
+    rewrites: [
+      { source: '/api/:path*', destination: '/api' },
+      { source: '/uploads/:path*', destination: '/api' },
+    ],
     headers: [
       {
         source: '/(.*)',

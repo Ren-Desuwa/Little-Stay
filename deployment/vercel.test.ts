@@ -6,7 +6,8 @@ describe('Vercel application deployment', () => {
     const config = vercelConfig();
     expect(config.framework).toBe('vite');
     expect(config.rewrites).toEqual([
-      { source: '/uploads/:path*', destination: '/api/uploads-file/:path*' },
+      { source: '/api/:path*', destination: '/api' },
+      { source: '/uploads/:path*', destination: '/api' },
     ]);
     expect(config.headers).toContainEqual({
       source: '/api/:path*',

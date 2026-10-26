@@ -41,7 +41,7 @@ The API restarts when its source changes during development. Existing sessions a
 
 ## Deploy to Vercel
 
-The complete app runs on **Vercel**: Vite serves the frontend and `api/[...path].ts` runs Express as a Node.js function. Production data lives in **Turso/libSQL**, and photos live in a **public Vercel Blob store**. There is no separate backend server or persistent disk to operate. Local development and tests continue to use `node:sqlite` and local uploads without environment variables.
+The complete app runs on **Vercel**: Vite serves the frontend and `api/index.ts` runs Express as a Node.js function. Production data lives in **Turso/libSQL**, and photos live in a **public Vercel Blob store**. There is no separate backend server or persistent disk to operate. Local development and tests continue to use `node:sqlite` and local uploads without environment variables.
 
 SQLite files and uploads cannot persist in a Vercel function's filesystem. The cloud handler explicitly requires remote storage and never falls back to local files or `/tmp`. The educational hash table, Levenshtein search, and Voronoi implementation remain unchanged.
 
