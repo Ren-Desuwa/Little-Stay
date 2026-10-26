@@ -97,7 +97,6 @@ export function AuthModal({
           </select>
         </label>
       )}
-      <GoogleSignIn role={register ? role : 'guest'} onError={setError} />
       <form className="stack-form" onSubmit={submit}>
         {register && (
           <label>
@@ -141,6 +140,7 @@ export function AuthModal({
       >
         {register ? 'Already have an account? Sign in' : 'New here? Create an account'}
       </button>
+      <GoogleSignIn role={register ? role : 'guest'} onError={setError} />
       {import.meta.env.DEV && !register && (
         <details className="sample-accounts">
           <summary>Seeded accounts for local testing</summary>

@@ -39,6 +39,7 @@ export default function GoogleSignIn({
     return <p>Google account connected. You can sign in with Google.</p>;
   return (
     <div className="google-sign-in">
+      {!link && <p className="auth-divider">or</p>}
       <button
         type="button"
         className="outline google-button"
@@ -78,7 +79,6 @@ export default function GoogleSignIn({
         </svg>
         {busy ? 'Opening Google…' : link ? 'Connect Google account' : 'Continue with Google'}
       </button>
-      {!link && <p className="auth-divider">or use your email and password</p>}
     </div>
   );
 }
